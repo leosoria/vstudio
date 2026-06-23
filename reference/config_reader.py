@@ -18,6 +18,7 @@ This module does not execute controls.
 It only returns which modules and controls are active.
 """
 
+import re
 import warnings
 
 import pandas as pd
@@ -31,6 +32,66 @@ warnings.filterwarnings(
 
 
 CONFIG_SHEET = "CONFIG"
+
+def normalize_sheet_name(value):
+    """
+    Normalize Excel sheet names for case-insensitive matching.
+    """
+    if value is None:
+        return ""
+
+    return str(value).strip().lower()
+
+
+def resolve_excel_sheet_name(file_path, requested_sheet_name):
+    """
+    Resolve an Excel sheet name using case-insensitive matching.
+
+    This allows config.xlsx to contain sheets like:
+    - CONFIG
+    - config
+    - Config
+
+    while the code can still request CONFIG.
+    """
+    excel_file = pd.ExcelFile(file_path)
+    requested_sheet_name_normalized = normalize_sheet_name(requested_sheet_name)
+
+    for available_sheet_name in excel_file.sheet_names:
+        if normalize_sheet_name(available_sheet_name) == requested_sheet_name_normalized:
+            return available_sheet_name
+
+    raise ValueError(
+        f"Worksheet named '{requested_sheet_name}' not found in {file_path}. "
+        f"Available sheets: {excel_file.sheet_names}"
+    )
+
+
+def normalize_control_id(value):
+    """
+    Normalize control IDs.
+
+    Examples:
+    - AR001  -> AR_001
+    - AR01   -> AR_001
+    - AR_001 -> AR_001
+    - AR006  -> AR_006
+    """
+    control_id = str(value).strip().upper()
+
+    if control_id == "" or control_id.lower() == "nan":
+        return ""
+
+    match = re.fullmatch(r"([A-Z]+)_?0*([0-9]+)", control_id)
+
+    if not match:
+        return control_id
+
+    prefix = match.group(1)
+    number = int(match.group(2))
+
+    return f"{prefix}_{number:03d}"
+
 
 
 def normalize_header(value):
@@ -80,8 +141,13 @@ def format_date(value):
 def read_excel_sheet(file_path, sheet_name):
     """
     Read an Excel sheet and clean empty rows/columns.
+
+    Sheet lookup is case-insensitive, so CONFIG, config and Config are treated
+    as the same sheet name.
     """
-    dataframe = pd.read_excel(file_path, sheet_name=sheet_name)
+    resolved_sheet_name = resolve_excel_sheet_name(file_path, sheet_name)
+
+    dataframe = pd.read_excel(file_path, sheet_name=resolved_sheet_name)
 
     dataframe = dataframe.dropna(axis=0, how="all")
     dataframe = dataframe.dropna(axis=1, how="all")
@@ -162,7 +228,13 @@ def get_active_controls(config_path, module_name):
     """
     module_df = read_excel_sheet(config_path, module_name)
 
-    id_control_column = find_column(module_df, ["ID Control"])
+    id_control_column = find_column(
+        module_df,
+        [
+            "ID Control",
+            "TEST",
+        ],
+    )
     execute_column = find_column(module_df, ["Execute", "Exetute"])
     param1_column = find_column(module_df, ["PARAM1"])
     param2_column = find_column(module_df, ["PARAM2"])
@@ -177,7 +249,7 @@ def get_active_controls(config_path, module_name):
     )
 
     if id_control_column is None:
-        raise ValueError(f"Could not find ID Control column in sheet {module_name}.")
+        raise ValueError(f"Could not find ID Control or TEST column in sheet {module_name}.")
 
     if execute_column is None:
         raise ValueError(f"Could not find Execute column in sheet {module_name}.")
@@ -185,9 +257,10 @@ def get_active_controls(config_path, module_name):
     active_controls = []
 
     for _, row in module_df.iterrows():
-        id_control = str(row.get(id_control_column, "")).strip()
+        raw_id_control = str(row.get(id_control_column, "")).strip()
+        id_control = normalize_control_id(raw_id_control)
 
-        if id_control == "" or id_control.lower() == "nan":
+        if id_control == "":
             continue
 
         execute = normalize_execute_value(row.get(execute_column, ""))
