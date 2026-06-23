@@ -19,6 +19,10 @@ Implemented AR controls:
 
 """
 
+import sys
+
+sys.dont_write_bytecode = True
+
 from pathlib import Path
 from time import perf_counter
 
@@ -58,6 +62,31 @@ def format_elapsed_time(seconds):
     seconds = total_seconds % 60
 
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+import shutil
+
+
+def cleanup_python_cache(project_folder):
+    """
+    Remove Python cache folders and .pyc files from the project.
+    """
+    removed_items = 0
+
+    for pycache_folder in project_folder.rglob("__pycache__"):
+        if pycache_folder.is_dir():
+            shutil.rmtree(pycache_folder, ignore_errors=True)
+            removed_items += 1
+
+    for pyc_file in project_folder.rglob("*.pyc"):
+        if pyc_file.is_file():
+            try:
+                pyc_file.unlink()
+                removed_items += 1
+            except OSError:
+                pass
+
+    return removed_items
 
 
 def main():
@@ -170,6 +199,10 @@ def main():
         f"({run_elapsed_time:.2f} seconds)"
     )
     print()
+
+
+    removed_cache_items = cleanup_python_cache(project_folder)
+    print(f"Python cache cleanup: {removed_cache_items} item(s) removed.")
 
 
 if __name__ == "__main__":
