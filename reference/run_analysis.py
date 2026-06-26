@@ -144,6 +144,7 @@ def load_dependencies():
     from modules.CD.cd_001 import run_cd_001
     from modules.CD.cd_002 import run_cd_002
     from modules.CD.cd_003 import run_cd_003
+    from modules.CD.cd_004 import run_cd_004
 
     control_runners = {
         "AR_001": run_ar_001,
@@ -155,6 +156,7 @@ def load_dependencies():
         "CD_001": run_cd_001,
         "CD_002": run_cd_002,
         "CD_003": run_cd_003,
+        "CD_004": run_cd_004,
     }
 
     return read_active_configuration, control_runners

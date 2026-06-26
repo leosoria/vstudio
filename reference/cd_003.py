@@ -125,6 +125,39 @@ def build_duplicate_payment_key(row):
     )
 
 
+def get_dup_window_days(context):
+    """
+    Return duplicate review window days for CD_003.
+
+    Priority:
+    1. Control PARAM1 from the CD sheet in config.xlsx.
+    2. Default DUP_WINDOW_DAYS when PARAM1 is blank.
+    """
+    control_config = context.get("control", {})
+    param1_value = normalize_text(control_config.get("param1", ""))
+
+    if param1_value == "":
+        return DUP_WINDOW_DAYS
+
+    try:
+        window_days = int(float(param1_value))
+    except ValueError as error:
+        raise ValueError(
+            "Invalid CD_003 PARAM1. "
+            "Expected a positive number of days for duplicate review window. "
+            f"Received: {param1_value}"
+        ) from error
+
+    if window_days <= 0:
+        raise ValueError(
+            "Invalid CD_003 PARAM1. "
+            "Duplicate review window days must be greater than zero. "
+            f"Received: {param1_value}"
+        )
+
+    return window_days
+
+
 def get_nearest_duplicate_days(payment_dates, window_days):
     """
     Return the nearest duplicate distance in days for each payment date.
@@ -289,7 +322,7 @@ def build_cd_003_dataframe(detail_dataframe, window_days=DUP_WINDOW_DAYS):
     return output_dataframe
 
 
-def print_cd_003_summary(detail_dataframe, output_dataframe, output_file):
+def print_cd_003_summary(detail_dataframe, output_dataframe, output_file, window_days):
     """
     Print CD_003 validation summary.
     """
@@ -298,7 +331,7 @@ def print_cd_003_summary(detail_dataframe, output_dataframe, output_file):
     print(f"CD_003 source/detail rows: {len(detail_dataframe)}")
     print(f"CD_003 duplicate candidate rows: {len(output_dataframe)}")
     print(f"CD_003 duplicate keys: {output_dataframe['DUP_PAYMENT_KEY'].nunique()}")
-    print(f"Duplicate window days: {DUP_WINDOW_DAYS}")
+    print(f"Duplicate window days: {window_days}")
     print(f"Output file: {output_file}")
     print(f"Output sheet: {SHEET_NAME}")
     print()
@@ -308,6 +341,8 @@ def run_cd_003(context):
     """
     Run CD_003.
     """
+    window_days = get_dup_window_days(context)
+
     source_dataframe = load_cd_base_data(context)
 
     detail_dataframe = build_cd_001_dataframe(
@@ -317,13 +352,17 @@ def run_cd_003(context):
 
     output_dataframe = build_cd_003_dataframe(
         detail_dataframe=detail_dataframe,
+        window_days=window_days,
     )
 
     if len(output_dataframe) == 0:
         print()
         print("WARNING: CD_003 generated 0 rows.")
         print("Possible causes:")
-        print("- No duplicate same vendor/currency/amount payments were found within 30 days.")
+        print(
+            f"- No duplicate same vendor/currency/amount payments were found "
+            f"within {window_days} days."
+        )
         print("- No rows with D/C = S were found.")
         print("- COMPANIES filter does not match Empr values.")
         print("- The input file is empty or the wrong sheet was read.")
@@ -361,4 +400,5 @@ def run_cd_003(context):
         detail_dataframe=detail_dataframe,
         output_dataframe=output_dataframe,
         output_file=output_file,
+        window_days=window_days,
     )
