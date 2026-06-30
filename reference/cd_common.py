@@ -5,7 +5,7 @@ This module contains reusable functions for Cash Disbursements controls.
 
 Design rules:
 - The CD input file is a module-level base extract, not a control-specific file.
-- The input file name is resolved from the CD module PARAM1 in config.xlsx.
+- The input file name is resolved as LBR CA_YYYYMMDD using the CD module TO date.
 - Every CD control must be independent.
 - Every CD control must write only its own sheet.
 - No CD control must delete sheets from other controls.
@@ -31,7 +31,7 @@ warnings.filterwarnings(
 
 ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".txt"]
 
-CD_DEFAULT_INPUT_KEYWORD = "LBR Cash"
+CD_DEFAULT_INPUT_KEYWORD = "LBR CA"
 CD_HEADER_FILL = "D9EAF7"
 CD_DATE_FORMAT = "dd/mm/yyyy"
 CD_AMOUNT_FORMAT = '#,##0.00'
@@ -277,23 +277,33 @@ def find_all_files_containing(base_folder, text_to_find):
     return sorted(matched_files)
 
 
+def get_cd_base_input_keyword(context):
+    """
+    Return the CD base input keyword.
+
+    Current CD extracts follow the AR-style naming convention:
+        LBR CA_YYYYMMDD.xlsx
+
+    The YYYYMMDD suffix comes from the CD module TO date. The filename is not
+    read from PARAM1 because config.xlsx should only define execution criteria
+    such as MODULE, FROM, TO, COMPANIES and EXECUTE.
+    """
+    period_suffix = get_period_suffix(context["module"])
+
+    return f"{CD_DEFAULT_INPUT_KEYWORD}_{period_suffix}"
+
+
 def find_cd_base_input_file(context):
     """
     Find the module-level CD input file.
 
-    Search keyword priority:
-    1. CD module PARAM1 in config.xlsx.
-    2. Default keyword: LBR Cash.
+    Expected pattern:
+        input/LBR CA_YYYYMMDD.xlsx
 
     This allows the same input file to be used by CD001, CD002, CD003 and CD004.
     """
     input_folder = Path(context["input_folder"])
-    module_config = context["module"]
-
-    keyword = normalize_text(module_config.get("param1", ""))
-
-    if keyword == "":
-        keyword = CD_DEFAULT_INPUT_KEYWORD
+    keyword = get_cd_base_input_keyword(context)
 
     matched_files = find_all_files_containing(
         base_folder=input_folder,
@@ -315,7 +325,7 @@ def find_cd_base_input_file(context):
 
         raise ValueError(
             f"Multiple CD input files found using keyword '{keyword}'. "
-            f"Please make MODULE PARAM1 more specific in config.xlsx.\n"
+            f"Expected only one LBR CA extract for the CD module TO date.\n"
             f"{matched_files_text}"
         )
 
@@ -526,6 +536,121 @@ def load_cd_base_data(context):
     dataframe = clean_dataframe(dataframe)
 
     return dataframe
+
+
+def normalize_intercompany_match_value(value):
+    """
+    Normalize vendor/customer values for intercompany matching.
+
+    Examples:
+    - 0000000854 -> 854
+    - 854.0 -> 854
+    - PROMONLOGICALIS TEC. E PART. LTDA -> uppercase trimmed text
+    """
+    value_text = normalize_text(value).upper()
+
+    if value_text == "":
+        return ""
+
+    if value_text.endswith(".0"):
+        value_text = value_text[:-2]
+
+    if value_text.isdigit():
+        return str(int(value_text))
+
+    return " ".join(value_text.split())
+
+
+def get_cd_intercompany_reference_sets():
+    """
+    Return intercompany reference sets for CD vendor exclusion.
+
+    The static list currently lives in core/intercompanies.py and was originally
+    created for AR customers. CD uses it as the approved reference for:
+    - Exact Vendor Code vs customer matching.
+    - Vendor Name vs excluded_intercompany matching.
+    """
+    from core.intercompanies import INTERCOMPANIES
+
+    customer_values = set()
+    excluded_name_values = set()
+
+    for intercompany in INTERCOMPANIES:
+        customer_value = normalize_intercompany_match_value(
+            intercompany.get("customer", "")
+        )
+        excluded_name_value = normalize_intercompany_match_value(
+            intercompany.get("excluded_intercompany", "")
+        )
+
+        if customer_value != "":
+            customer_values.add(customer_value)
+
+        if excluded_name_value != "":
+            excluded_name_values.add(excluded_name_value)
+
+    return {
+        "customers": customer_values,
+        "excluded_names": excluded_name_values,
+    }
+
+
+def is_cd_intercompany_vendor(vendor_code, vendor_name, reference_sets=None):
+    """
+    Return True when a CD vendor is identified as intercompany.
+    """
+    if reference_sets is None:
+        reference_sets = get_cd_intercompany_reference_sets()
+
+    normalized_vendor_code = normalize_intercompany_match_value(vendor_code)
+    normalized_vendor_name = normalize_intercompany_match_value(vendor_name)
+
+    if normalized_vendor_code in reference_sets["customers"]:
+        return True
+
+    if normalized_vendor_name in reference_sets["excluded_names"]:
+        return True
+
+    return False
+
+
+def add_cd_intercompany_flag(dataframe):
+    """
+    Add Is Intercompany flag to a CD payment detail dataframe.
+
+    Expected columns:
+    - Vendor Code
+    - Vendor Name
+    """
+    result = dataframe.copy()
+
+    if result.empty:
+        result["Is Intercompany"] = pd.Series(dtype=bool)
+        return result
+
+    reference_sets = get_cd_intercompany_reference_sets()
+
+    result["Is Intercompany"] = result.apply(
+        lambda row: is_cd_intercompany_vendor(
+            vendor_code=row.get("Vendor Code", ""),
+            vendor_name=row.get("Vendor Name", ""),
+            reference_sets=reference_sets,
+        ),
+        axis=1,
+    )
+
+    return result
+
+
+def exclude_cd_intercompany_payments(dataframe):
+    """
+    Exclude CD intercompany vendors from a CD payment detail dataframe.
+    """
+    flagged_dataframe = add_cd_intercompany_flag(dataframe)
+
+    return flagged_dataframe[
+        flagged_dataframe["Is Intercompany"] != True
+    ].drop(columns=["Is Intercompany"]).copy()
 
 
 def open_or_create_cd_output_workbook(output_file):

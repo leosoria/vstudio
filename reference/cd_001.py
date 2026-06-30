@@ -9,35 +9,13 @@ Analysis:
 Description:
 Extracts cash disbursements by vendor using the common CD SAP extract.
 
-Output style:
-This control produces a regional-style cash disbursements output with columns similar to:
-- CoCo
-- Company
-- KEY_DOC
-- Payment DocEntry
-- Payment DocNum
-- Journal TransId
-- Vendor Code
-- Vendor Name
-- KEY_VENDOR
-- Payment Date
-- Tax Date
-- Payment Currency
-- Company Main Currency
-- Payment Amount
-- Payment Amount USD
-- Counter Reference
-- Canceled
-- Transfer Amount
-- Cash Amount
-- Check Amount
-- Credit Card Amount
-- FxRate
-
 SAP logic:
 - The input extract includes BKPF + BSAK + T001 + LFA1 data.
 - For this payment-style output, only payment rows are kept:
     D/C = S
+- Reversed/canceled payment rows are excluded using:
+    Estorno c/
+    Estorno
 - Payment Amount is shown as positive using abs(amount).
 - Payment Amount USD is calculated using SAP FX rates when available.
 - FxRate is included as the last output column for auditability.
@@ -155,6 +133,17 @@ OPTIONAL_COLUMNS = {
     "line_accounting_document": [
         "Nº doc..1",
         "Nº doc.1",
+    ],
+    "reversal_document": [
+        "Estorno c/",
+        "Estorno c",
+    ],
+    "reversal_reason": [
+        "Motiv.est",
+        "Motiv est",
+    ],
+    "reversal_indicator": [
+        "Estorno",
     ],
 }
 
@@ -309,6 +298,47 @@ def get_payment_amount_series(source_dataframe, amount_column):
         return abs(float(parsed_amount))
 
     return source_dataframe[amount_column].apply(parse_payment_amount)
+
+
+def is_blank_value(value):
+    """
+    Return True if value is blank/null/nan.
+    """
+    value_text = normalize_text(value)
+
+    return value_text == ""
+
+
+def build_not_reversed_mask(dataframe, optional_columns):
+    """
+    Build mask to exclude reversed/canceled payment rows.
+
+    Rule:
+    - If Estorno c/ is populated, exclude.
+    - If Estorno is populated, exclude.
+
+    Valid payments must have both fields blank.
+    """
+    reversal_document_column = optional_columns.get("reversal_document")
+    reversal_indicator_column = optional_columns.get("reversal_indicator")
+
+    if reversal_document_column is None:
+        reversal_document_blank = pd.Series(
+            [True] * len(dataframe),
+            index=dataframe.index,
+        )
+    else:
+        reversal_document_blank = dataframe[reversal_document_column].apply(is_blank_value)
+
+    if reversal_indicator_column is None:
+        reversal_indicator_blank = pd.Series(
+            [True] * len(dataframe),
+            index=dataframe.index,
+        )
+    else:
+        reversal_indicator_blank = dataframe[reversal_indicator_column].apply(is_blank_value)
+
+    return reversal_document_blank & reversal_indicator_blank
 
 
 def choose_counter_reference(row):
@@ -568,56 +598,68 @@ def build_cd_001_dataframe(source_dataframe, context):
     print(f"CD_001 source rows loaded: {len(source_dataframe)}")
     print(f"CD_001 rows after company filter: {len(filtered_dataframe)}")
 
-    # Keep payment rows only.
-    filtered_dataframe = filtered_dataframe[
+    payment_mask = (
         filtered_dataframe[required_columns["debit_credit_indicator"]]
         .fillna("")
         .astype(str)
         .str.strip()
         .str.upper()
         == "S"
-    ].copy()
+    )
 
-    print(f"CD_001 payment rows D/C = S: {len(filtered_dataframe)}")
+    payment_dataframe = filtered_dataframe[payment_mask].copy()
 
-    output_dataframe = pd.DataFrame(index=filtered_dataframe.index)
+    print(f"CD_001 payment rows D/C = S: {len(payment_dataframe)}")
 
-    company_code = filtered_dataframe[required_columns["company_code"]].apply(
+    not_reversed_mask = build_not_reversed_mask(
+        dataframe=payment_dataframe,
+        optional_columns=optional_columns,
+    )
+
+    reversed_payment_rows = payment_dataframe[~not_reversed_mask].copy()
+    valid_payment_dataframe = payment_dataframe[not_reversed_mask].copy()
+
+    print(f"CD_001 reversed payment rows excluded: {len(reversed_payment_rows)}")
+    print(f"CD_001 valid payment rows: {len(valid_payment_dataframe)}")
+
+    output_dataframe = pd.DataFrame(index=valid_payment_dataframe.index)
+
+    company_code = valid_payment_dataframe[required_columns["company_code"]].apply(
         normalize_company_output
     )
 
     company_name = get_text_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["company_name"],
     )
 
     vendor_code = get_document_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         required_columns["vendor_code"],
     )
 
     vendor_name = get_text_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["vendor_name"],
     )
 
     payment_doc_entry = get_document_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         required_columns["clearing_document"],
     )
 
     payment_doc_num = get_document_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         required_columns["header_accounting_document"],
     )
 
     line_accounting_document = get_document_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["line_accounting_document"],
     )
 
     reference_key = get_document_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["reference_key"],
     )
 
@@ -629,29 +671,29 @@ def build_cd_001_dataframe(source_dataframe, context):
         )
     ]
 
-    payment_date = filtered_dataframe[
+    payment_date = valid_payment_dataframe[
         required_columns["clearing_date"]
     ].apply(to_datetime_value)
 
     tax_date = get_date_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["line_document_date"],
     )
 
     # If line tax date is missing, use header document date.
     if tax_date.isna().all():
         tax_date = get_date_series(
-            filtered_dataframe,
+            valid_payment_dataframe,
             optional_columns["header_document_date"],
         )
 
     payment_currency = get_text_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["line_currency"],
     )
 
     company_main_currency = get_text_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["company_main_currency"],
     )
 
@@ -662,7 +704,7 @@ def build_cd_001_dataframe(source_dataframe, context):
     )
 
     payment_amount = get_payment_amount_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         required_columns["amount_document_original"],
     )
 
@@ -699,11 +741,11 @@ def build_cd_001_dataframe(source_dataframe, context):
     output_dataframe["Payment Amount"] = payment_amount
 
     output_dataframe["Line Reference"] = get_text_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["line_reference"],
     )
     output_dataframe["Header Reference"] = get_text_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["header_reference"],
     )
     output_dataframe["Reference Key"] = reference_key
@@ -713,11 +755,11 @@ def build_cd_001_dataframe(source_dataframe, context):
         axis=1,
     )
 
-    # SAP extract does not currently provide a direct canceled flag.
+    # Reversed payments are excluded, so all remaining records are not canceled.
     output_dataframe["Canceled"] = "N"
 
     output_dataframe["Payment Method"] = get_text_series(
-        filtered_dataframe,
+        valid_payment_dataframe,
         optional_columns["payment_method"],
     )
 
@@ -811,9 +853,10 @@ def run_cd_001(context):
         print("WARNING: CD_001 generated 0 rows.")
         print("Possible causes:")
         print("- No rows with D/C = S were found.")
+        print("- All D/C = S rows were reversed/canceled.")
         print("- COMPANIES filter does not match Empr values.")
         print("- The input file is empty or the wrong sheet was read.")
-        print("- The module PARAM1 matched the wrong input file.")
+        print("- The input file name does not match LBR CA_YYYYMMDD.")
         print()
 
     output_file = get_cd_output_file(context)
