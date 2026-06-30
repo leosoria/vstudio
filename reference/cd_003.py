@@ -275,22 +275,16 @@ def build_cd_003_dataframe(detail_dataframe, window_days=DUP_WINDOW_DAYS):
         "Nearest Duplicate Days"
     ].notna()
 
-    nearest_days_by_key_doc = (
-        matching_dataframe.dropna(subset=["Nearest Duplicate Days"])
-        .set_index("KEY_DOC")["Nearest Duplicate Days"]
-        .to_dict()
-    )
-
-    duplicate_key_docs = set(
-        matching_dataframe.loc[
-            matching_dataframe["Is Duplicate Candidate"],
-            "KEY_DOC",
-        ]
-    )
-
-    output_dataframe = working_dataframe[
-        working_dataframe["KEY_DOC"].isin(duplicate_key_docs)
+    candidate_matches = matching_dataframe.loc[
+        matching_dataframe["Is Duplicate Candidate"],
+        ["Duplicate Group Key", "KEY_DOC", "Nearest Duplicate Days"],
     ].copy()
+
+    output_dataframe = working_dataframe.merge(
+        candidate_matches,
+        on=["Duplicate Group Key", "KEY_DOC"],
+        how="inner",
+    )
 
     if output_dataframe.empty:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
@@ -300,9 +294,6 @@ def build_cd_003_dataframe(detail_dataframe, window_days=DUP_WINDOW_DAYS):
         axis=1,
     )
     output_dataframe["Dup Window Days"] = window_days
-    output_dataframe["Nearest Duplicate Days"] = output_dataframe["KEY_DOC"].map(
-        nearest_days_by_key_doc
-    )
 
     output_dataframe = output_dataframe[OUTPUT_COLUMNS]
 
@@ -363,10 +354,10 @@ def run_cd_003(context):
             f"- No duplicate same vendor/currency/amount payments were found "
             f"within {window_days} days."
         )
-        print("- No rows with D/C = S were found.")
+        print("- No clean rows with D/C = S, Estorno c/ blank and Estorno blank were found.")
         print("- COMPANIES filter does not match Empr values.")
         print("- The input file is empty or the wrong sheet was read.")
-        print("- The module PARAM1 matched the wrong input file.")
+        print("- The expected LBR CA input file for the module TO date was not found or was incorrect.")
         print()
 
     output_file = get_cd_output_file(context)
