@@ -539,6 +539,14 @@ def load_dependencies():
     from modules.FAM.fam_004 import run_fam_004
 
     from modules.GL.gl_001 import run_gl_001
+    from modules.GL.gl_002 import run_gl_002
+    from modules.GL.gl_003 import run_gl_003
+    from modules.GL.gl_004 import run_gl_004
+    from modules.GL.gl_005 import run_gl_005
+    from modules.GL.gl_006 import run_gl_006
+    from modules.GL.gl_007 import run_gl_007
+    from modules.GL.gl_008 import run_gl_008
+    from modules.GL.gl_009 import run_gl_009
 
     control_runners = {
         "AR_001": run_ar_001,
@@ -556,6 +564,14 @@ def load_dependencies():
         "FAM_003": run_fam_003,
         "FAM_004": run_fam_004,
         "GL_001": run_gl_001,
+        "GL_002": run_gl_002,
+        "GL_003": run_gl_003,
+        "GL_004": run_gl_004,
+        "GL_005": run_gl_005,
+        "GL_006": run_gl_006,
+        "GL_007": run_gl_007,
+        "GL_008": run_gl_008,
+        "GL_009": run_gl_009,
     }
 
     return read_active_configuration, control_runners
