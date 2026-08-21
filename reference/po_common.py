@@ -194,6 +194,16 @@ PO01_REQUIRED_FIELDS = (
     "Item Code",
 )
 
+PO02_REQUIRED_FIELDS = (
+    "Company",
+    "PO Number",
+    "PO Line",
+    "Vendor Code",
+    "PO Doc Date",
+    "Item Code",
+    "PO Quantity",
+)
+
 
 def normalize_text(value):
     """Return trimmed text without pandas missing-value placeholders."""
