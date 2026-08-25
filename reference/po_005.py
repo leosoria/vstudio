@@ -21,7 +21,6 @@ from core.po_common import (
 CONTROL_ID = "PO_005"
 CONTROL_NAME = "GR More Than N Days After PO Approval"
 SHEET_NAME = "PO05"
-GR_PREFIX = "LBR PR GR"
 DEFAULT_DAYS = 30
 PO_KEY = ["Company", "PO Number"]
 LINE_KEY = PO_KEY + ["PO Line"]
@@ -113,39 +112,11 @@ def _resolve_columns(df, aliases):
 
 
 def _find_gr(context):
-    folder = Path(
-        context["input_folder"]
+    return find_period_input_file(
+        context=context,
+        input_prefix=PR_GR_INPUT_PREFIX,
+        source_name="PO GR",
     )
-
-    suffix = get_period_suffix(
-        context["module"]
-    )
-
-    expected = normalize_lookup(
-        f"{GR_PREFIX} {suffix}"
-    )
-
-    matches = sorted(
-        path
-        for path in folder.rglob("*")
-        if path.is_file()
-        and not path.name.startswith("~$")
-        and path.suffix.casefold() in ALLOWED_INPUT_EXTENSIONS
-        and normalize_lookup(path.stem) == expected
-    ) if folder.is_dir() else []
-
-    if len(matches) != 1:
-        detail = (
-            "\n".join(map(str, matches))
-            or "none"
-        )
-
-        raise FileNotFoundError(
-            f"Expected one LBR PR_GR_{suffix}.XLSX "
-            f"below {folder}; found:\n{detail}"
-        )
-
-    return matches[0]
 
 
 def _load_gr(context):

@@ -32,7 +32,6 @@ from core.po_common import (
 CONTROL_ID = "PO_004"
 CONTROL_NAME = "Goods Receipt Before Purchase Order"
 SHEET_NAME = "PO04"
-GR_INPUT_PREFIX = "LBR PR GR"
 INPUT_SHEET = "Sheet1"
 HEADER_ROW = 1
 
@@ -251,47 +250,12 @@ def _resolve_columns(dataframe, aliases, source_name):
 
 
 def _find_gr_input(context):
-    """Require exactly one original period-specific LBR PR_GR export."""
-    input_folder = Path(
-        context["input_folder"]
+    """Return the period-specific PO goods-receipt input."""
+    return find_period_input_file(
+        context=context,
+        input_prefix=PR_GR_INPUT_PREFIX,
+        source_name="PO GR",
     )
-
-    suffix = get_period_suffix(
-        context["module"]
-    )
-
-    expected = normalize_lookup(
-        f"{GR_INPUT_PREFIX} {suffix}"
-    )
-
-    matches = sorted(
-        path
-        for path in input_folder.rglob("*")
-        if path.is_file()
-        and path.suffix.casefold() in ALLOWED_INPUT_EXTENSIONS
-        and not path.name.startswith("~$")
-        and normalize_lookup(path.stem) == expected
-    )
-
-    if not matches:
-        raise FileNotFoundError(
-            "PO GR input was not found. "
-            "Expected exactly one file equivalent "
-            f"to 'LBR PR_GR_{suffix}.XLSX' "
-            f"below {input_folder}."
-        )
-
-    if len(matches) > 1:
-        raise ValueError(
-            f"Multiple PO GR inputs were found for {suffix}; "
-            "expected exactly one:\n"
-            + "\n".join(
-                f"- {path}"
-                for path in matches
-            )
-        )
-
-    return matches[0]
 
 
 def load_gr_movements(context):

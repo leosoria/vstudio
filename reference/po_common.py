@@ -21,6 +21,12 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 
 PO_INPUT_PREFIX = "LBR PO Lines"
+PR_LINES_INPUT_PREFIX = "LBR PO PR Lines"
+PR_GR_INPUT_PREFIX = "LBR PO PR GR"
+
+PO_CDHDR_INPUT_PREFIX = "LBR PO CDHDR"
+PO_CDPOS_INPUT_PREFIX = "LBR PO CDPOS"
+
 PO_INPUT_EXTENSION = ".xlsx"
 PO_INPUT_SHEET = "Sheet1"
 PO_HEADER_ROW = 1
@@ -392,37 +398,50 @@ def discover_po_input_files(
     )
 
 
-def find_po_input_file(context):
-    """Require exactly one PO Lines workbook for CONFIG TO."""
-    input_folder = Path(
-        context["input_folder"]
-    )
+def find_period_input_file(
+    context,
+    input_prefix,
+    source_name,
+):
+    """
+    Encuentra exactamente una bajada del período CONFIG TO.
 
-    module_config = context[
-        "module"
-    ]
+    La comparación ignora mayúsculas, espacios, guiones y underscores.
+    """
+    input_folder = Path(context["input_folder"])
 
-    matches = discover_po_input_files(
-        input_folder,
-        module_config,
-    )
+    if not input_folder.is_dir():
+        raise FileNotFoundError(
+            f"{source_name} input folder was not found: {input_folder}"
+        )
 
     period_suffix = get_period_suffix(
-        module_config
+        context["module"]
+    )
+
+    expected_stem = normalize_lookup(
+        f"{input_prefix} {period_suffix}"
+    )
+
+    matches = sorted(
+        path
+        for path in input_folder.rglob("*")
+        if path.is_file()
+        and not path.name.startswith("~$")
+        and path.suffix.casefold() in ALLOWED_INPUT_EXTENSIONS
+        and normalize_lookup(path.stem) == expected_stem
     )
 
     expected_name = (
-        f"{PO_INPUT_PREFIX}_"
-        f"{period_suffix}"
-        f"{PO_INPUT_EXTENSION}"
+        f"{input_prefix.replace(' ', '_')}_"
+        f"{period_suffix}.xlsx"
     )
 
     if not matches:
         raise FileNotFoundError(
-            "PO Lines input was not found. "
-            "Expected exactly one file "
-            f"equivalent to '{expected_name}' "
-            f"below {input_folder}."
+            f"{source_name} input was not found. "
+            f"Expected exactly one file equivalent to "
+            f"'{expected_name}' below {input_folder}."
         )
 
     if len(matches) > 1:
@@ -432,10 +451,9 @@ def find_po_input_file(context):
         )
 
         raise ValueError(
-            "Multiple PO Lines inputs were "
-            f"found for {period_suffix}; "
-            "expected exactly one:"
-            f"\n{details}"
+            f"Multiple {source_name} inputs were found for "
+            f"{period_suffix}; expected exactly one:\n"
+            f"{details}"
         )
 
     return matches[0]

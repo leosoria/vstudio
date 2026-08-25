@@ -126,25 +126,11 @@ def _window_days(context):
 
 
 def _find_input(context):
-    suffix = get_period_suffix(context["module"])
-    expected = f"lbrprlines{suffix}"
-
-    matches = [
-        path
-        for path in Path(context["input_folder"]).rglob("*")
-        if path.is_file()
-        and path.suffix.casefold() in {".xlsx", ".xlsm", ".xls"}
-        and not path.name.startswith("~$")
-        and "".join(ch for ch in path.stem.casefold() if ch.isalnum()) == expected
-    ]
-
-    if len(matches) != 1:
-        raise ValueError(
-            f"Se esperaba exactamente un LBR PR_Lines_{suffix}.XLSX; "
-            f"encontrados: {matches}."
-        )
-
-    return matches[0]
+    return find_period_input_file(
+        context=context,
+        input_prefix=PR_LINES_INPUT_PREFIX,
+        source_name="PR Lines",
+    )
 
 
 def _load_pr_lines(context):

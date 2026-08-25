@@ -80,57 +80,65 @@ GR_ALIASES = {
 
 
 def _load_gr(context):
-    """Carga LBR PR_GR_YYYYMMDD y normaliza los campos usados por PO07."""
-    suffix = get_period_suffix(context["module"])
-    folder = Path(context["input_folder"])
+    """Carga LBR PO_PR_GR_YYYYMMDD y normaliza los campos usados por PO07."""
+    input_file = find_period_input_file(
+        context=context,
+        input_prefix=PR_GR_INPUT_PREFIX,
+        source_name="PO GR",
+    )
 
-    matches = [
-        path
-        for path in folder.iterdir()
-        if path.is_file()
-        and path.suffix.lower() in {".xlsx", ".xlsm", ".xls"}
-        and path.stem.upper() == f"LBR PR_GR_{suffix}".upper()
-    ]
+    gr = pd.read_excel(
+        input_file,
+        sheet_name="Sheet1",
+        dtype=object,
+    )
 
-    if len(matches) != 1:
-        raise FileNotFoundError(
-            f"Expected exactly one LBR PR_GR_{suffix}.XLSX; "
-            f"found {len(matches)}."
-        )
-
-    gr = pd.read_excel(matches[0], sheet_name="Sheet1", dtype=object)
-    gr = gr.dropna(how="all").rename(columns={
-        source: target
-        for target, source in GR_ALIASES.items()
-    })
+    gr = gr.dropna(how="all").rename(
+        columns={
+            source: target
+            for target, source in GR_ALIASES.items()
+        }
+    )
 
     missing = [
         column
         for column in GR_ALIASES
         if column not in gr.columns
     ]
-    if missing:
-        raise ValueError(f"Missing PO GR columns: {missing}")
 
-    for column in ("Company", "PO Number", "PO Line", "GR Creator ID"):
-        gr[column] = gr[column].map(normalize_identifier)
+    if missing:
+        raise ValueError(
+            f"Missing PO GR columns: {missing}"
+        )
+
+    for column in (
+        "Company",
+        "PO Number",
+        "PO Line",
+        "GR Creator ID",
+    ):
+        gr[column] = gr[column].map(
+            normalize_identifier
+        )
 
     gr["GR Doc Date"] = pd.to_datetime(
         gr["GR Doc Date"],
         errors="coerce",
         dayfirst=True,
     )
+
     gr["GR Posting Date"] = pd.to_datetime(
         gr["GR Posting Date"],
         errors="coerce",
         dayfirst=True,
     )
+
     gr["GR Quantity"] = pd.to_numeric(
         gr["GR Quantity"],
         errors="coerce",
     )
 
-    return gr, matches[0]
+    return gr, input_file
 
 
 def _build_exceptions(po, gr):
