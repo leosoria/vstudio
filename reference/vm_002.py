@@ -17,7 +17,9 @@ import pandas as pd
 
 from core.vm_common import (
     build_vendor_master_population,
+    build_vm_last_invoice_population,
     get_valid_vendor_population,
+    load_vm_vendor_postings,
     load_vm_vendors,
     normalize_company,
     normalize_exact_key,
@@ -197,9 +199,10 @@ def _load_vm02_population(
     context: dict[str, Any],
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
-    Load and validate the VM02 population.
+    Load the validated VM02 vendor population and enrich it with the latest AP
+    invoice from VPBSIK/VPBSAK.
 
-    The vendor workbook is read exactly once through load_vm_vendors().
+    Each input workbook is loaded at most once in this control execution.
     """
     vendor_source = load_vm_vendors(
         context
@@ -222,18 +225,99 @@ def _load_vm02_population(
         )
     )
 
-    metrics = {
-        "source_rows": len(vendor_source),
-        "master_rows": len(vendor_master),
-        "excluded_company": excluded_company,
-        **population_metrics,
-    }
-
     if valid_population.empty:
         raise ValueError(
             f"{CONTROL_ID}: valid vendor population is empty after "
             "CONFIG company and common VM exclusion rules."
         )
+
+    postings, posting_metadata = (
+        load_vm_vendor_postings(
+            context
+        )
+    )
+
+    if (
+        postings is None
+        or not posting_metadata.get(
+            "available",
+            False,
+        )
+    ):
+        raise FileNotFoundError(
+            f"{CONTROL_ID}: VPBSIK and VPBSAK are required to "
+            "populate the last-invoice display columns."
+        )
+
+    last_invoices = (
+        build_vm_last_invoice_population(
+            postings
+        )
+    )
+
+    valid_population = valid_population.merge(
+        last_invoices,
+        how="left",
+        on=[
+            "Company",
+            "Vendor Code",
+        ],
+        validate="one_to_one",
+    )
+
+    for column in (
+        "Last Invoice Number",
+        "Last Transaction Date",
+        "Last Inv Amt Doc Currency Indicator",
+    ):
+        valid_population[column] = (
+            valid_population[column]
+            .astype("string")
+            .fillna("")
+        )
+
+    valid_population[
+        "Last Inv Amt Doc Currency"
+    ] = pd.to_numeric(
+        valid_population[
+            "Last Inv Amt Doc Currency"
+        ],
+        errors="coerce",
+    )
+
+    metrics = {
+        "source_rows": len(
+            vendor_source
+        ),
+        "master_rows": len(
+            vendor_master
+        ),
+        "excluded_company": (
+            excluded_company
+        ),
+        "posting_rows": len(
+            postings
+        ),
+        "invoice_posting_rows": int(
+            postings[
+                "Document Type"
+            ]
+            .astype("string")
+            .str.strip()
+            .str.upper()
+            .isin(
+                {
+                    "RE",
+                    "KR",
+                }
+            )
+            .sum()
+        ),
+        "vendors_with_last_invoice": len(
+            last_invoices
+        ),
+        **population_metrics,
+    }
 
     return valid_population, metrics
 
@@ -280,11 +364,11 @@ def _normalize_address_columns(
     return normalized
 
 
-def _add_lha_display_columns(
+def _add_display_columns(
     dataframe: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Map LBR vendor-master columns to the required LHA VM02 output layout.
+    Map LBR vendor-master columns to the required VM02 output layout.
 
     The current VM vendor extract does not contain invoice history, so the four
     last-invoice display columns remain blank. No unsupported transaction or FX
@@ -304,15 +388,19 @@ def _add_lha_display_columns(
     )
 
     # ECC LFA1 provides one central vendor address rather than separate B/S
-    # address rows. It is represented as B for compatibility with LHA output.
+    # address rows. It is represented as B for compatibility with output.
     result["Address Type"] = "B"
 
-    result["Last Invoice Number"] = ""
-    result["Last Transaction Date"] = ""
-    result["Last Inv Amt Doc Currency"] = ""
-    result[
-        "Last Inv Amt Doc Currency Indicator"
-    ] = ""
+    invoice_display_columns = (
+        "Last Invoice Number",
+        "Last Transaction Date",
+        "Last Inv Amt Doc Currency",
+        "Last Inv Amt Doc Currency Indicator",
+    )
+
+    for column in invoice_display_columns:
+        if column not in result.columns:
+            result[column] = ""
 
     return result
 
@@ -418,7 +506,7 @@ def build_vm_002(
         )
     )
 
-    # LHA excludes an address only when Street, City, ZipCode and Country are
+    # Excludes an address only when Street, City, ZipCode and Country are
     # all empty after normalization.
     comparable = data.loc[
         address_content.ne("")
@@ -456,7 +544,7 @@ def build_vm_002(
         + 1
     )
 
-    output = _add_lha_display_columns(
+    output = _add_display_columns(
         exceptions
     )
 
@@ -541,6 +629,22 @@ def run_vm_002(
         f"{metrics['output_rows']}"
     )
     print(f"{CONTROL_ID} exception rows: {len(output)}")
+
+
+    print(
+        f"{CONTROL_ID} posting rows: "
+        f"{metrics['posting_rows']}"
+    )
+
+    print(
+        f"{CONTROL_ID} RE/KR invoice posting rows: "
+        f"{metrics['invoice_posting_rows']}"
+    )
+
+    print(
+        f"{CONTROL_ID} vendors with last invoice: "
+        f"{metrics['vendors_with_last_invoice']}"
+    )
 
     for warning in metrics.get(
         "warnings",

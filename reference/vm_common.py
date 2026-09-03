@@ -10,17 +10,18 @@ Optional paired inputs:
     LBR VM_VPBSIK_YYYYMMDD.xlsx
     LBR VM_VPBSAK_YYYYMMDD.xlsx
 
+Optional accounting-document header input:
+    LBR_VM_BKPF_YYYYMMDD.xlsx
+
+Optional bank-change inputs:
     LBR VM_BANK_CDHDR_YYYYMMDD.xlsx
     LBR VM_BANK_CDPOS_YYYYMMDD.xlsx
 
-Optional input:
+Optional employee input:
     LBR_VM_EMP_YYYYMMDD.xlsx
 
 YYYYMMDD is derived strictly from the VM module TO date. Files from another
 period, with another name or from another scope are never used as fallback.
-
-The BKPF population required by the future VM17 control is not loaded yet
-because that extract is not currently available.
 """
 
 import re
@@ -36,6 +37,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from core.intercompanies import INTERCOMPANIES
 
 VM_INPUT_SHEET = "Hoja1"
 VM_INPUT_SHEET_ALIASES = (
@@ -47,19 +49,34 @@ VM_HEADER_ROW = 1
 VM_VENDOR_FILE_TEMPLATE = "LBR VM_VENDORS_{period}.xlsx"
 VM_BSIK_FILE_TEMPLATE = "LBR VM_VPBSIK_{period}.xlsx"
 VM_BSAK_FILE_TEMPLATE = "LBR VM_VPBSAK_{period}.xlsx"
+VM_BKPF_FILE_TEMPLATE = "LBR_VM_BKPF_{period}.xlsx"
 VM_EMPLOYEE_FILE_TEMPLATE = "LBR_VM_EMP_{period}.xlsx"
 VM_BANK_CDHDR_FILE_TEMPLATE = "LBR VM_BANK_CDHDR_{period}.xlsx"
 VM_BANK_CDPOS_FILE_TEMPLATE = "LBR VM_BANK_CDPOS_{period}.xlsx"
 
+# SAP ECC document types equivalent to OPCH AP invoices.
+VM_INVOICE_DOCUMENT_TYPES = frozenset(
+    {
+        "RE",
+        "KR",
+    }
+)
+
+VM_LAST_INVOICE_COLUMNS = (
+    "Last Invoice Number",
+    "Last Transaction Date",
+    "Last Inv Amt Doc Currency",
+    "Last Inv Amt Doc Currency Indicator",
+)
 
 VM_OUTPUT_FILE_TEMPLATE = "LBR_Results_VM_{period}.xlsx"
 
-VM_OUTPUT_HEADER_FILL = "1F4E78"
-VM_OUTPUT_HEADER_FONT_COLOR = "FFFFFF"
+# VM01 is the official visual-format reference.
+VM_OUTPUT_HEADER_FILL = "FFD9EAF7"
 
 VM_DATE_NUMBER_FORMAT = "DD/MM/YYYY"
-VM_AMOUNT_NUMBER_FORMAT = "#,##0.00"
-VM_INTEGER_NUMBER_FORMAT = "#,##0"
+VM_AMOUNT_NUMBER_FORMAT = "General"
+VM_INTEGER_NUMBER_FORMAT = "General"
 
 INVALID_TEXT_VALUES = {
     "",
@@ -91,6 +108,54 @@ POSTING_KEY_COLUMNS = (
     "Accounting Document",
     "Accounting Document Line",
 )
+
+POSTING_HEADER_KEY_COLUMNS = (
+    "Company",
+    "Fiscal Year",
+    "Accounting Document",
+)
+
+POSTING_HEADER_COLUMNS = (
+    "Company",
+    "Fiscal Year",
+    "Accounting Document",
+    "Posting Date",
+    "Posting User",
+)
+
+POSTING_HEADER_REQUIRED_COLUMNS = (
+    "Company",
+    "Fiscal Year",
+    "Accounting Document",
+    "Posting Date",
+    "Posting User",
+)
+
+POSTING_HEADER_PHYSICAL_COLUMNS = (
+    "Company Code",
+    "Document Number",
+    "Fiscal Year",
+    "Posting Date",
+    "User name",
+)
+
+POSTING_HEADER_ALIASES = {
+    "Company": (
+        "Company Code",
+    ),
+    "Fiscal Year": (
+        "Fiscal Year",
+    ),
+    "Accounting Document": (
+        "Document Number",
+    ),
+    "Posting Date": (
+        "Posting Date",
+    ),
+    "Posting User": (
+        "User name",
+    ),
+}
 
 CHANGE_KEY_COLUMNS = (
     "Change Object Class",
@@ -1591,12 +1656,33 @@ def read_vm_excel(
     file_path: str | Path,
     *,
     sheet_name: str = VM_INPUT_SHEET,
+    usecols: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Read one VM Excel export safely as object values."""
+    """
+    Read one VM Excel export safely as object values.
+
+    When usecols is supplied, only exact physical column names are selected.
+    Exact matching allows loaders to distinguish source headers that differ
+    only by letter casing.
+    """
     resolved_sheet = resolve_vm_sheet_name(
         file_path,
         sheet_name,
     )
+
+    selected_columns = None
+
+    if usecols is not None:
+        selected_columns = {
+            safe_text(column)
+            for column in usecols
+            if not is_blank(column)
+        }
+
+        if not selected_columns:
+            raise ValueError(
+                "VM Excel usecols cannot be an empty collection."
+            )
 
     try:
         dataframe = pd.read_excel(
@@ -1604,6 +1690,14 @@ def read_vm_excel(
             sheet_name=resolved_sheet,
             header=VM_HEADER_ROW - 1,
             dtype=object,
+            usecols=(
+                (
+                    lambda column: safe_text(column)
+                    in selected_columns
+                )
+                if selected_columns is not None
+                else None
+            ),
         )
     except PermissionError as error:
         raise PermissionError(
@@ -1624,16 +1718,31 @@ def read_vm_excel(
         how="all",
     )
 
+    dataframe.columns = [
+        safe_text(column)
+        for column in dataframe.columns
+    ]
+
+    if selected_columns is not None:
+        missing_columns = sorted(
+            selected_columns.difference(
+                dataframe.columns
+            )
+        )
+
+        if missing_columns:
+            raise ValueError(
+                f"VM worksheet '{resolved_sheet}' in {file_path} "
+                "is missing requested physical columns: "
+                f"{missing_columns}. Available selected headers: "
+                f"{list(dataframe.columns)}"
+            )
+
     if dataframe.empty:
         raise ValueError(
             f"VM worksheet '{resolved_sheet}' in {file_path} "
             "contains no data rows."
         )
-
-    dataframe.columns = [
-        safe_text(column)
-        for column in dataframe.columns
-    ]
 
     return dataframe
 
@@ -2270,11 +2379,62 @@ def _load_posting_source(
 
     result["Posting Source"] = source
 
+    # SAP exports may include footer/total rows after the posting population.
+    # Exclude only rows where every mandatory posting-key component is blank.
+    # Partially populated keys remain audit errors.
+    posting_key_values = result.loc[
+        :,
+        list(POSTING_KEY_COLUMNS),
+    ].astype(
+        "string"
+    ).fillna(
+        ""
+    )
+
+    posting_key_blank = pd.DataFrame(
+        {
+            column: posting_key_values[
+                column
+            ].str.strip().eq("")
+            for column in POSTING_KEY_COLUMNS
+        },
+        index=result.index,
+    )
+
+    fully_blank_key = posting_key_blank.all(
+        axis=1
+    )
+
+    residual_rows = int(
+        fully_blank_key.sum()
+    )
+
+    if residual_rows:
+        print(
+            f"VM {source}: excluded {residual_rows} "
+            "footer/total row(s) with fully blank posting keys."
+        )
+
+        result = result.loc[
+            ~fully_blank_key
+        ].copy()
+
+    if result.empty:
+        raise ValueError(
+            f"VM {source} contains no posting rows after "
+            "excluding fully blank footer/total rows."
+        )
+
     _require_complete_keys(
         result,
         POSTING_KEY_COLUMNS,
         source_name=f"VM {source}",
     )
+
+    result.attrs[
+        "excluded_fully_blank_key_rows"
+    ] = residual_rows
+    
 
     value_columns = [
         column
@@ -2387,15 +2547,592 @@ def load_vm_vendor_postings(
             "bsik_rows": len(bsik),
             "bsak_rows": len(bsak),
             "posting_rows": len(postings),
-            "warnings": [
-                "BKPF is not currently available. VM17 poster "
-                "attribution remains pending."
-            ],
+            "warnings": [],
         }
     )
 
     return postings, metadata
 
+
+def load_vm_posting_headers(
+    context: dict[str, Any],
+    *,
+    sheet_name: str = VM_INPUT_SHEET,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Load and validate SAP ECC accounting-document headers.
+
+    The source is reduced during the Excel read to the exact physical columns
+    required for posting-user attribution. Posting User is preserved as a
+    trimmed technical identifier without destructive normalization.
+    """
+    input_file = find_vm_input_file(
+        context,
+        VM_BKPF_FILE_TEMPLATE,
+        required=True,
+    )
+
+    raw = read_vm_excel(
+        input_file,
+        sheet_name=sheet_name,
+        usecols=POSTING_HEADER_PHYSICAL_COLUMNS,
+    )
+
+    source_rows = len(raw)
+
+    mapping = resolve_columns(
+        raw,
+        POSTING_HEADER_ALIASES,
+        POSTING_HEADER_REQUIRED_COLUMNS,
+        source_name="VM BKPF",
+    )
+
+    headers = _select_and_complete(
+        raw,
+        mapping,
+        POSTING_HEADER_COLUMNS,
+    )
+
+    headers["Company"] = headers[
+        "Company"
+    ].map(
+        normalize_company
+    )
+
+    headers["Fiscal Year"] = headers[
+        "Fiscal Year"
+    ].map(
+        normalize_identifier
+    )
+
+    headers["Accounting Document"] = headers[
+        "Accounting Document"
+    ].map(
+        normalize_document_number
+    )
+
+    headers["Posting Date"] = headers[
+        "Posting Date"
+    ].map(
+        normalize_date_text
+    )
+
+    headers["Posting User"] = headers[
+        "Posting User"
+    ].map(
+        safe_text
+    )
+
+    _require_complete_keys(
+        headers,
+        POSTING_HEADER_KEY_COLUMNS,
+        source_name="VM BKPF",
+    )
+
+    posting_date_text = (
+        headers["Posting Date"]
+        .astype("string")
+        .fillna("")
+        .str.strip()
+    )
+
+    posting_dates = pd.to_datetime(
+        posting_date_text,
+        format="%Y-%m-%d",
+        errors="coerce",
+    )
+
+    blank_posting_date = posting_date_text.eq("")
+
+    if blank_posting_date.any():
+        examples = (
+            headers.loc[
+                blank_posting_date,
+                list(POSTING_HEADER_KEY_COLUMNS),
+            ]
+            .head(20)
+            .to_dict("records")
+        )
+
+        raise ValueError(
+            "VM BKPF contains blank Posting Date values. "
+            f"Examples: {examples}"
+        )
+
+    invalid_posting_date = (
+        posting_date_text.ne("")
+        & posting_dates.isna()
+    )
+
+    if invalid_posting_date.any():
+        examples = (
+            posting_date_text.loc[
+                invalid_posting_date
+            ]
+            .drop_duplicates()
+            .head(20)
+            .tolist()
+        )
+
+        raise ValueError(
+            "VM BKPF contains invalid Posting Date values. "
+            f"Examples: {examples}"
+        )
+
+    date_from, date_to = get_vm_period(
+        context
+    )
+
+    outside_period = (
+        posting_dates.lt(date_from)
+        | posting_dates.gt(date_to)
+    )
+
+    if outside_period.any():
+        examples = (
+            headers.loc[
+                outside_period,
+                [
+                    *POSTING_HEADER_KEY_COLUMNS,
+                    "Posting Date",
+                ],
+            ]
+            .head(20)
+            .to_dict("records")
+        )
+
+        raise ValueError(
+            "VM BKPF contains Posting Date values outside "
+            f"CONFIG FROM/TO ({date_from.date()} to "
+            f"{date_to.date()}). Examples: {examples}"
+        )
+
+    key_columns = list(
+        POSTING_HEADER_KEY_COLUMNS
+    )
+
+    posting_user_nonblank = headers.loc[
+        headers["Posting User"].ne("")
+    ]
+
+    posting_user_counts = (
+        posting_user_nonblank.groupby(
+            key_columns,
+            sort=False,
+            observed=True,
+            dropna=False,
+        )["Posting User"]
+        .nunique()
+    )
+
+    conflicting_user_keys = posting_user_counts.loc[
+        posting_user_counts.gt(1)
+    ]
+
+    if not conflicting_user_keys.empty:
+        conflict_examples = (
+            conflicting_user_keys
+            .head(20)
+            .reset_index()
+            .loc[
+                :,
+                key_columns,
+            ]
+            .to_dict("records")
+        )
+
+        raise ValueError(
+            "VM BKPF contains conflicting Posting User values "
+            "for the same Company/Fiscal Year/Accounting "
+            f"Document key. Examples: {conflict_examples}"
+        )
+
+    posting_date_counts = (
+        headers.groupby(
+            key_columns,
+            sort=False,
+            observed=True,
+            dropna=False,
+        )["Posting Date"]
+        .nunique()
+    )
+
+    conflicting_date_keys = posting_date_counts.loc[
+        posting_date_counts.gt(1)
+    ]
+
+    if not conflicting_date_keys.empty:
+        conflict_examples = (
+            conflicting_date_keys
+            .head(20)
+            .reset_index()
+            .loc[
+                :,
+                key_columns,
+            ]
+            .to_dict("records")
+        )
+
+        raise ValueError(
+            "VM BKPF contains conflicting Posting Date values "
+            "for the same Company/Fiscal Year/Accounting "
+            f"Document key. Examples: {conflict_examples}"
+        )
+
+    headers["_Posting User Blank"] = headers[
+        "Posting User"
+    ].eq("")
+
+    headers = headers.sort_values(
+        [
+            *key_columns,
+            "_Posting User Blank",
+            "Posting User",
+        ],
+        kind="mergesort",
+    )
+
+    duplicate_rows = int(
+        headers.duplicated(
+            subset=key_columns,
+            keep="first",
+        ).sum()
+    )
+
+    headers = (
+        headers.drop_duplicates(
+            subset=key_columns,
+            keep="first",
+        )
+        .drop(
+            columns="_Posting User Blank"
+        )
+        .loc[
+            :,
+            list(POSTING_HEADER_COLUMNS),
+        ]
+        .reset_index(drop=True)
+    )
+
+    blank_posting_users = int(
+        headers["Posting User"].eq("").sum()
+    )
+
+    metadata = {
+        "available": True,
+        "source": "BKPF-USNAM",
+        "source_rows": source_rows,
+        "header_rows": len(headers),
+        "duplicate_rows_collapsed": duplicate_rows,
+        "posting_user_nonblank_rows": int(
+            headers["Posting User"].ne("").sum()
+        ),
+        "posting_user_blank_rows": blank_posting_users,
+        "posting_user_conflicts": 0,
+        "posting_date_from": (
+            posting_dates.min().strftime("%Y-%m-%d")
+        ),
+        "posting_date_to": (
+            posting_dates.max().strftime("%Y-%m-%d")
+        ),
+        "warnings": [],
+    }
+
+    if blank_posting_users:
+        metadata["warnings"].append(
+            "VM BKPF contains accounting-document headers "
+            "with blank Posting User."
+        )
+
+    return headers, metadata
+
+
+def build_vm_last_invoice_population(
+    postings: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build one latest AP-invoice row per Company + Vendor Code.
+
+    LBR equivalents of OPCH invoices:
+    - RE: invoice receipt / logistics invoice;
+    - KR: FI vendor invoice.
+
+    Selection order:
+    1. Posting Date descending;
+    2. Fiscal Year descending;
+    3. Accounting Document descending;
+    4. Accounting Document Line descending.
+
+    No FX conversion is applied. The amount remains in document currency.
+    """
+    output_columns = [
+        "Company",
+        "Vendor Code",
+        *VM_LAST_INVOICE_COLUMNS,
+    ]
+
+    if postings is None or postings.empty:
+        return pd.DataFrame(
+            columns=output_columns
+        )
+
+    required_columns = {
+        "Company",
+        "Vendor Code",
+        "Fiscal Year",
+        "Accounting Document",
+        "Accounting Document Line",
+        "Posting Date",
+        "Document Type",
+        "Document Currency",
+        "Amount in Document Currency",
+    }
+
+    missing_columns = sorted(
+        required_columns.difference(
+            postings.columns
+        )
+    )
+
+    if missing_columns:
+        raise ValueError(
+            "VM last-invoice population requires missing "
+            f"posting columns: {missing_columns}."
+        )
+
+    working = postings.loc[
+        :,
+        list(required_columns),
+    ].copy()
+
+    working["Company"] = working[
+        "Company"
+    ].map(
+        normalize_company
+    )
+
+    working["Vendor Code"] = working[
+        "Vendor Code"
+    ].map(
+        normalize_vendor_code
+    )
+
+    working["Document Type"] = working[
+        "Document Type"
+    ].map(
+        normalize_upper_text
+    )
+
+    working = working.loc[
+        working["Document Type"].isin(
+            VM_INVOICE_DOCUMENT_TYPES
+        )
+    ].copy()
+
+    if working.empty:
+        return pd.DataFrame(
+            columns=output_columns
+        )
+
+    working["_Posting Date"] = pd.to_datetime(
+        working["Posting Date"],
+        format="%Y-%m-%d",
+        errors="coerce",
+    )
+
+    invalid_date = (
+        working["Posting Date"]
+        .astype("string")
+        .fillna("")
+        .str.strip()
+        .ne("")
+        & working["_Posting Date"].isna()
+    )
+
+    if invalid_date.any():
+        examples = (
+            working.loc[
+                invalid_date,
+                "Posting Date",
+            ]
+            .astype("string")
+            .drop_duplicates()
+            .head(20)
+            .tolist()
+        )
+
+        raise ValueError(
+            "VM invoice postings contain invalid Posting Date "
+            f"values. Examples: {examples}"
+        )
+
+    missing_date = working[
+        "_Posting Date"
+    ].isna()
+
+    if missing_date.any():
+        examples = (
+            working.loc[
+                missing_date,
+                [
+                    "Company",
+                    "Vendor Code",
+                    "Accounting Document",
+                ],
+            ]
+            .head(20)
+            .to_dict("records")
+        )
+
+        raise ValueError(
+            "VM invoice postings contain blank Posting Date "
+            f"values. Examples: {examples}"
+        )
+
+    amount_text = (
+        working[
+            "Amount in Document Currency"
+        ]
+        .astype("string")
+        .fillna("")
+        .str.strip()
+    )
+
+    working["_Invoice Amount"] = pd.to_numeric(
+        amount_text,
+        errors="coerce",
+    )
+
+    invalid_amount = (
+        amount_text.ne("")
+        & working["_Invoice Amount"].isna()
+    )
+
+    if invalid_amount.any():
+        examples = (
+            amount_text.loc[
+                invalid_amount
+            ]
+            .drop_duplicates()
+            .head(20)
+            .tolist()
+        )
+
+        raise ValueError(
+            "VM invoice postings contain invalid document-currency "
+            f"amounts. Examples: {examples}"
+        )
+
+    # OPCH.DocTotal is presented as a positive invoice total.
+    working["_Invoice Amount"] = working[
+        "_Invoice Amount"
+    ].abs()
+
+    working["_Fiscal Year Sort"] = pd.to_numeric(
+        working["Fiscal Year"],
+        errors="coerce",
+    ).fillna(-1)
+
+    working["_Document Sort"] = working[
+        "Accounting Document"
+    ].map(
+        normalize_document_number
+    )
+
+    working["_Line Sort"] = working[
+        "Accounting Document Line"
+    ].map(
+        normalize_line_number
+    )
+
+    working = working.sort_values(
+        [
+            "Company",
+            "Vendor Code",
+            "_Posting Date",
+            "_Fiscal Year Sort",
+            "_Document Sort",
+            "_Line Sort",
+        ],
+        ascending=[
+            True,
+            True,
+            False,
+            False,
+            False,
+            False,
+        ],
+        kind="mergesort",
+    )
+
+    latest = working.drop_duplicates(
+        subset=[
+            "Company",
+            "Vendor Code",
+        ],
+        keep="first",
+    ).copy()
+
+    latest["Last Invoice Number"] = latest[
+        "Accounting Document"
+    ].map(
+        normalize_document_number
+    )
+
+    latest["Last Transaction Date"] = latest[
+        "_Posting Date"
+    ].dt.strftime(
+        "%Y-%m-%d"
+    )
+
+    latest[
+        "Last Inv Amt Doc Currency"
+    ] = latest[
+        "_Invoice Amount"
+    ]
+
+    latest[
+        "Last Inv Amt Doc Currency Indicator"
+    ] = latest[
+        "Document Currency"
+    ].map(
+        normalize_upper_text
+    )
+
+    result = latest.loc[
+        :,
+        output_columns,
+    ].copy()
+
+    duplicate_vendor = result.duplicated(
+        subset=[
+            "Company",
+            "Vendor Code",
+        ],
+        keep=False,
+    )
+
+    if duplicate_vendor.any():
+        examples = (
+            result.loc[
+                duplicate_vendor,
+                [
+                    "Company",
+                    "Vendor Code",
+                ],
+            ]
+            .head(20)
+            .to_dict("records")
+        )
+
+        raise ValueError(
+            "VM latest-invoice population is not unique by "
+            f"Company/Vendor Code. Examples: {examples}"
+        )
+
+    return result.reset_index(
+        drop=True
+    )
 
 
 def _employee_date_to_text(
@@ -3022,12 +3759,62 @@ def load_vm_bank_changes(
     return changes, metadata
 
 
+def get_intercompany_vendor_codes() -> set[str]:
+    """
+    Return normalized SAP identifiers from core.intercompanies.
+
+    The shared intercompany file names its identifier field ``customer``
+    because it was originally created for AR. VM compares the same configured
+    identifiers against normalized Vendor Code values.
+    """
+    codes = set()
+
+    for item in INTERCOMPANIES:
+        if not isinstance(
+            item,
+            dict,
+        ):
+            raise ValueError(
+                "core.intercompanies.INTERCOMPANIES must contain "
+                "dictionaries."
+            )
+
+        raw_code = item.get(
+            "customer",
+            "",
+        )
+
+        normalized_code = normalize_vendor_code(
+            raw_code
+        )
+
+        if normalized_code != "":
+            codes.add(
+                normalized_code
+            )
+
+    if not codes:
+        raise ValueError(
+            "core.intercompanies.INTERCOMPANIES contains no "
+            "valid identifiers for VM exclusions."
+        )
+
+    return codes
+
+
 def get_valid_vendor_population(
     vendor_master: pd.DataFrame,
-    *,
-    intercompany_account_groups: Iterable[Any] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Apply reversible VM valid-population rules."""
+    """
+    Apply the approved VM valid-population rules.
+
+    Exclusions:
+    - central deletion flag;
+    - company deletion flag;
+    - vendor prefixes E and T;
+    - employee/functionary Account Group ZFUN;
+    - configured intercompany identifiers from core.intercompanies.
+    """
     required = {
         "Company",
         "Vendor Code",
@@ -3036,24 +3823,32 @@ def get_valid_vendor_population(
         "Account Group",
         "Trading Partner",
     }
+
     missing = sorted(
-        required.difference(vendor_master.columns)
+        required.difference(
+            vendor_master.columns
+        )
     )
 
     if missing:
         raise ValueError(
-            f"VM valid population requires missing columns: {missing}."
+            f"VM valid population requires missing columns: "
+            f"{missing}."
         )
 
     result = vendor_master.copy()
 
     central_deleted = result[
         "Central Deletion Flag"
-    ].map(lambda value: not is_blank(value))
+    ].map(
+        lambda value: not is_blank(value)
+    )
 
     company_deleted = result[
         "Company Deletion Flag"
-    ].map(lambda value: not is_blank(value))
+    ].map(
+        lambda value: not is_blank(value)
+    )
 
     prefix_excluded = result[
         "Vendor Code"
@@ -3064,6 +3859,26 @@ def get_valid_vendor_population(
             "E",
             "T",
         )
+    )
+
+    employee_account_group = result[
+        "Account Group"
+    ].map(
+        normalize_upper_text
+    ).eq(
+        "ZFUN"
+    )
+
+    intercompany_vendor_codes = (
+        get_intercompany_vendor_codes()
+    )
+
+    intercompany_vendor = result[
+        "Vendor Code"
+    ].map(
+        normalize_vendor_code
+    ).isin(
+        intercompany_vendor_codes
     )
 
     metadata = {
@@ -3077,7 +3892,15 @@ def get_valid_vendor_population(
         "excluded_vendor_prefix_e_or_t": int(
             prefix_excluded.sum()
         ),
-        "excluded_intercompany_account_group": 0,
+        "excluded_employee_account_group_zfun": int(
+            employee_account_group.sum()
+        ),
+        "configured_intercompany_vendor_codes": len(
+            intercompany_vendor_codes
+        ),
+        "excluded_intercompany_vendor_code": int(
+            intercompany_vendor.sum()
+        ),
         "trading_partner_nonblank_rows": int(
             result["Trading Partner"].map(
                 lambda value: not is_blank(value)
@@ -3086,48 +3909,31 @@ def get_valid_vendor_population(
         "warnings": [],
     }
 
+    excluded = (
+        central_deleted
+        | company_deleted
+        | prefix_excluded
+        | employee_account_group
+        | intercompany_vendor
+    )
+
     result = result.loc[
-        ~(
-            central_deleted
-            | company_deleted
-            | prefix_excluded
-        )
+        ~excluded
     ].copy()
 
-    if intercompany_account_groups is None:
-        metadata["warnings"].append(
-            "No intercompany Account Group list was supplied. "
-            "Trading Partner was retained as auxiliary metadata "
-            "and no intercompany exclusion was applied."
-        )
-    else:
-        groups = {
-            normalize_upper_text(value)
-            for value in intercompany_account_groups
-            if not is_blank(value)
-        }
-
-        intercompany = result[
-            "Account Group"
-        ].map(
-            normalize_upper_text
-        ).isin(groups)
-
-        metadata[
-            "excluded_intercompany_account_group"
-        ] = int(intercompany.sum())
-
-        result = result.loc[
-            ~intercompany
-        ].copy()
-
-    metadata["output_rows"] = len(result)
+    metadata["output_rows"] = len(
+        result
+    )
 
     return (
         result.sort_values(
-            list(VENDOR_KEY_COLUMNS),
+            list(
+                VENDOR_KEY_COLUMNS
+            ),
             kind="mergesort",
-        ).reset_index(drop=True),
+        ).reset_index(
+            drop=True
+        ),
         metadata,
     )
 
@@ -3406,7 +4212,6 @@ def _format_vm_control_sheet(
     )
     header_font = Font(
         bold=True,
-        color=VM_OUTPUT_HEADER_FONT_COLOR,
     )
 
     header_positions = {}
@@ -3583,7 +4388,7 @@ def write_vm_control_sheet(
     sheet_name:
         VM result sheet, for example VM01 or VM02.
     dataframe:
-        Final control output with columns already in required LHA/LBR order.
+        Final control output with columns already in required eaorder.
     date_columns:
         Columns formatted as DD/MM/YYYY.
     amount_columns:
