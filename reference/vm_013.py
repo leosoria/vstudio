@@ -1,66 +1,12 @@
-# VM_013 objective: identify valid vendors without a resolved Tax Number.
-# Functional Tax Number definition for the initial LBR/SAP ECC implementation:
-# Tax Number 1 (LFA1-STCD1), followed by Tax Number 2 (LFA1-STCD2).
-# The first nonblank value wins. Audit may revise this explicit definition
-# in the future.
-#
-# Functional and audit notes:
-# - The priority was confirmed from the LBR/SAP ECC vm_vendors extract dated
-#   2026-07-31.
-# - The diagnostic population contained 24,276 unique Company + Vendor rows.
-# - Tax Number 1 resolved 18,999 rows and Tax Number 2 resolved another 5,101
-#   rows. The fields were complementary in the observed population.
-# - Adding Tax Number 3, Tax Number 4, Tax Number 5 or VAT Registration Number
-#   did not resolve any additional row after Tax Number 1 and Tax Number 2.
-# - Tax Number 3 is deliberately excluded because it represents a different
-#   fiscal attribute in the observed data and may contain values such as
-#   ISENTO.
-# - VM_013 identifies absence only. It does not validate format, length,
-#   checksum, country structure, uniqueness, completeness or legitimacy.
-# - A nonblank value such as "0", a zero sequence, an alphanumeric identifier
-#   or an identifier containing punctuation is not considered absent.
-# - VM_012 and VM_013 may produce the same exceptions in the current data, but
-#   they are not functionally identical: VM_012 currently uses a broader
-#   Business Number priority.
-# - The global run_analysis.py currently treats a runner without a Python
-#   exception as technically OK, even when this runner returns status ERROR
-#   because audit exceptions were found.
-
 """
-VM_013 - Valid vendors without a resolved Tax Number.
+VM_013 - Valid vendors without a resolved Tax Number
 
-Objective
----------
-Identify valid vendors whose canonical Tax Number is empty after applying the
-approved initial LBR/SAP ECC functional resolution:
+Tax Number priority: LFA1-STCD1, then LFA1-STCD2; the first nonblank value
+wins. This LBR/SAP ECC definition may be revised by audit in the future.
 
-    1. Tax Number 1 (LFA1-STCD1)
-    2. Tax Number 2 (LFA1-STCD2)
-
-The first nonblank value wins.
-
-Population
-----------
-The control operates only on the population returned by
-get_valid_vendor_population(). Common deletion, employee/functionary,
-Vendor Code prefix and intercompany exclusions remain the responsibility of
-core.vm_common.
-
-Analytic scope
---------------
-VM_013 detects absence only. It does not perform:
-
-- length validation;
-- checksum validation;
-- country-specific validation;
-- format validation;
-- duplicate-Tax-Number detection;
-- legitimacy validation;
-- transformations that turn an informed value into an empty value.
-
-Output grain
-------------
-One row per unique CoCo + Vendor Code, written only to worksheet VM13.
+Uses the valid population from get_valid_vendor_population() and reports one
+row per Company and Vendor Code when the resolved Tax Number is blank. The
+control detects absence only; it does not validate Tax Number format or quality.
 """
 
 import re

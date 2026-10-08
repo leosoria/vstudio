@@ -3,14 +3,19 @@ VM_007 - Vendors with frequent bank-data changes.
 
 Objective
 ---------
-Identify vendors with at least the configured number of distinct bank-change
-events during the VM analysis period.
+Identify valid vendors with at least the number of distinct bank-change events
+configured in PARAM1 during the VM analysis period.
 
 PARAM1 defines the minimum number of distinct change events. When PARAM1 is
-blank, the default threshold is 2.
+blank, DEFAULT_MINIMUM_CHANGES is used.
 
-Initial LFBK record creations identified by CHNGIND=I are excluded because they
-represent the first registration of bank data rather than a subsequent change.
+Initial LFBK record creations identified by CHNGIND=I are excluded because
+they represent the first registration of bank data rather than a subsequent
+modification.
+
+The threshold is calculated using distinct Change Event Key values. Multiple
+CDPOS positions belonging to the same change document count as one event for
+threshold purposes, but every changed field remains visible in the output.
 
 The input workbook resolution, SAP CDHDR/CDPOS reconciliation, normalization,
 common vendor-population validation and workbook writing are delegated to
@@ -18,13 +23,23 @@ core.vm_common.
 
 Output
 ------
-One row per Company + Vendor Code:
+One row per qualifying vendor, company and changed bank-data position:
 
     Company
     CoCo
     Vendor Code
     Vendor Name
     Cambios
+    Change Date
+    Change Time
+    Changed By
+    Transaction Code
+    Change Document
+    Changed Record Key
+    Changed Field
+    Change Type
+    Old Value
+    New Value
 """
 
 from time import perf_counter
@@ -39,6 +54,7 @@ from core.vm_common import (
     load_vm_bank_changes,
     load_vm_vendors,
     normalize_company,
+    normalize_identifier,
     normalize_upper_text,
     normalize_vendor_code,
     safe_text,
@@ -48,6 +64,9 @@ from core.vm_common import (
 
 CONTROL_ID = "VM_007"
 SHEET_NAME = "VM07"
+
+# This value is used only when PARAM1 is blank.
+# Configure PARAM1=3 in config.xlsx for the requested threshold.
 DEFAULT_MINIMUM_CHANGES = 2
 
 OUTPUT_COLUMNS = [
@@ -56,6 +75,31 @@ OUTPUT_COLUMNS = [
     "Vendor Code",
     "Vendor Name",
     "Cambios",
+    "Change Date",
+    "Change Time",
+    "Changed By",
+    "Transaction Code",
+    "Change Document",
+    "Changed Record Key",
+    "Changed Field",
+    "Change Type",
+    "Old Value",
+    "New Value",
+]
+
+CHANGE_DETAIL_COLUMNS = [
+    "Vendor Code",
+    "Change Event Key",
+    "Change Date",
+    "Change Time",
+    "Changed By",
+    "Transaction Code",
+    "Change Document",
+    "Changed Record Key",
+    "Changed Field",
+    "Change Type",
+    "Old Value",
+    "New Value",
 ]
 
 
@@ -80,8 +124,8 @@ def _minimum_changes(
     """
     Return the minimum number of distinct bank-change events.
 
-    PARAM1 must be a positive whole number. A blank PARAM1 uses the default
-    threshold of 2.
+    PARAM1 must be a positive whole number. A blank PARAM1 uses
+    DEFAULT_MINIMUM_CHANGES.
     """
     control_config = context.get(
         "control",
@@ -100,6 +144,7 @@ def _minimum_changes(
         "param1",
         "",
     )
+
     text_value = safe_text(
         raw_value
     )
@@ -114,9 +159,11 @@ def _minimum_changes(
                 ".",
             )
         )
+
         threshold = int(
             numeric_value
         )
+
     except (
         TypeError,
         ValueError,
@@ -178,6 +225,7 @@ def _configured_companies(
         raw_values = list(
             raw_companies
         )
+
     else:
         text = safe_text(
             raw_companies
@@ -231,7 +279,8 @@ def _load_valid_vendor_population(
     """
     Load the vendor workbook and return the valid VM07 vendor population.
 
-    The common VM population rules are applied after the CONFIG company filter.
+    The configured-company filter and the common VM population exclusions are
+    applied before matching vendors to bank-change events.
     """
     vendor_source = load_vm_vendors(
         context
@@ -241,9 +290,14 @@ def _load_valid_vendor_population(
         vendor_source
     )
 
+    master_rows_before_company = len(
+        vendor_master
+    )
+
     configured_companies = _configured_companies(
         context
     )
+
     excluded_company = 0
 
     if configured_companies:
@@ -279,6 +333,9 @@ def _load_valid_vendor_population(
         "source_rows": len(
             vendor_source
         ),
+        "master_rows_before_company": (
+            master_rows_before_company
+        ),
         "master_rows": len(
             vendor_master
         ),
@@ -296,13 +353,10 @@ def _validate_input_columns(
     bank_changes: pd.DataFrame,
     vendor_population: pd.DataFrame,
 ) -> None:
-    """Validate the columns required by the VM07 analytic."""
-    required_change_columns = {
-        "Vendor Code",
-        "Change Event Key",
-        "Change Date",
-        "Change Type",
-    }
+    """Validate all columns required by the VM07 detailed analytic."""
+    required_change_columns = set(
+        CHANGE_DETAIL_COLUMNS
+    )
 
     required_vendor_columns = {
         "Company",
@@ -334,20 +388,22 @@ def _validate_input_columns(
         )
 
 
-def _prepare_change_events(
+def _prepare_change_details(
     bank_changes: pd.DataFrame,
     *,
     date_from: Any,
     date_to: Any,
 ) -> pd.DataFrame:
     """
-    Return one row per Vendor Code + Change Event Key in the analysis period.
+    Prepare eligible bank-change detail positions.
 
-    Multiple CDPOS rows may belong to the same CDHDR change document. Those
-    rows are collapsed into one event so that changing several bank fields in
-    one transaction counts as one bank-change event.
+    Initial LFBK insertions are removed. The returned DataFrame retains every
+    changed field so the result explains when, who and what changed.
     """
-    changes = bank_changes.copy()
+    changes = bank_changes.loc[
+        :,
+        CHANGE_DETAIL_COLUMNS,
+    ].copy()
 
     changes["Vendor Code"] = changes[
         "Vendor Code"
@@ -366,6 +422,33 @@ def _prepare_change_events(
         errors="coerce",
     )
 
+    changes["Change Type"] = changes[
+        "Change Type"
+    ].map(
+        normalize_upper_text
+    )
+
+    changes["Change Document"] = changes[
+        "Change Document"
+    ].map(
+        normalize_identifier
+    )
+
+    for column in [
+        "Change Time",
+        "Changed By",
+        "Transaction Code",
+        "Changed Record Key",
+        "Changed Field",
+        "Old Value",
+        "New Value",
+    ]:
+        changes[column] = changes[
+            column
+        ].map(
+            safe_text
+        )
+
     start_date = pd.Timestamp(
         date_from
     ).normalize()
@@ -379,12 +462,6 @@ def _prepare_change_events(
             f"{CONTROL_ID}: date_from cannot be later than date_to."
         )
 
-    normalized_change_type = changes[
-        "Change Type"
-    ].map(
-        normalize_upper_text
-    )
-
     in_analysis_period = changes[
         "Change Date"
     ].between(
@@ -393,10 +470,10 @@ def _prepare_change_events(
         inclusive="both",
     )
 
-    # SAP CDPOS CHNGIND=I represents the initial insertion of an LFBK record.
-    is_bank_modification = normalized_change_type.ne(
-        "I"
-    )
+    # SAP CDPOS CHNGIND=I represents initial LFBK record creation.
+    is_bank_modification = changes[
+        "Change Type"
+    ].ne("I")
 
     has_vendor_code = changes[
         "Vendor Code"
@@ -406,37 +483,38 @@ def _prepare_change_events(
         "Change Event Key"
     ].ne("")
 
-    changes = changes.loc[
+    eligible = (
         in_analysis_period
         & is_bank_modification
         & has_vendor_code
-        & has_event_key,
-        [
-            "Vendor Code",
-            "Change Event Key",
-        ],
+        & has_event_key
+    )
+
+    changes = changes.loc[
+        eligible
     ].copy()
 
     if changes.empty:
         return pd.DataFrame(
-            columns=[
-                "Vendor Code",
-                "Change Event Key",
-            ]
+            columns=CHANGE_DETAIL_COLUMNS
         )
 
+    # Avoid duplicating identical CDPOS positions while preserving different
+    # fields belonging to the same change event.
+    changes = changes.drop_duplicates(
+        subset=CHANGE_DETAIL_COLUMNS,
+        keep="first",
+    )
+
     return (
-        changes.drop_duplicates(
-            subset=[
-                "Vendor Code",
-                "Change Event Key",
-            ],
-            keep="first",
-        )
-        .sort_values(
+        changes.sort_values(
             [
                 "Vendor Code",
-                "Change Event Key",
+                "Change Date",
+                "Change Time",
+                "Change Document",
+                "Changed Record Key",
+                "Changed Field",
             ],
             kind="mergesort",
         )
@@ -445,21 +523,22 @@ def _prepare_change_events(
 
 
 def _summarize_vendor_changes(
-    change_events: pd.DataFrame,
+    change_details: pd.DataFrame,
     *,
     minimum_changes: int,
 ) -> pd.DataFrame:
     """
     Count distinct bank-change events by Vendor Code.
 
-    Only vendors meeting or exceeding the configured threshold are returned.
+    Multiple changed fields belonging to one Change Event Key count as one
+    event. Only vendors meeting or exceeding PARAM1 are returned.
     """
     if minimum_changes < 1:
         raise ValueError(
             f"{CONTROL_ID}: minimum_changes must be at least 1."
         )
 
-    if change_events.empty:
+    if change_details.empty:
         return pd.DataFrame(
             columns=[
                 "Vendor Code",
@@ -467,8 +546,25 @@ def _summarize_vendor_changes(
             ]
         )
 
+    event_rows = (
+        change_details.loc[
+            :,
+            [
+                "Vendor Code",
+                "Change Event Key",
+            ],
+        ]
+        .drop_duplicates(
+            subset=[
+                "Vendor Code",
+                "Change Event Key",
+            ],
+            keep="first",
+        )
+    )
+
     summary = (
-        change_events.groupby(
+        event_rows.groupby(
             "Vendor Code",
             sort=False,
             observed=True,
@@ -608,17 +704,16 @@ def build_vm_007(
     minimum_changes: int = DEFAULT_MINIMUM_CHANGES,
 ) -> pd.DataFrame:
     """
-    Return the VM07 summary.
+    Return detailed bank changes for vendors meeting the VM07 threshold.
+
+    Threshold grain:
+        one distinct Change Event Key per Vendor Code
 
     Output grain:
-        one row per Company + Vendor Code
+        one row per company and changed CDPOS bank-data position
 
-    Output columns:
-        Company
-        CoCo
-        Vendor Code
-        Vendor Name
-        Cambios
+    Cambios is repeated on every detail row and represents the number of
+    distinct change events for the vendor, not the number of output rows.
     """
     _validate_input_columns(
         bank_changes,
@@ -638,21 +733,28 @@ def build_vm_007(
             columns=OUTPUT_COLUMNS
         )
 
-    change_events = _prepare_change_events(
+    change_details = _prepare_change_details(
         bank_changes,
         date_from=date_from,
         date_to=date_to,
     )
 
-    change_summary = _summarize_vendor_changes(
-        change_events,
+    qualifying_vendors = _summarize_vendor_changes(
+        change_details,
         minimum_changes=minimum_changes,
     )
 
-    if change_summary.empty:
+    if qualifying_vendors.empty:
         return pd.DataFrame(
             columns=OUTPUT_COLUMNS
         )
+
+    qualifying_details = change_details.merge(
+        qualifying_vendors,
+        on="Vendor Code",
+        how="inner",
+        validate="many_to_one",
+    )
 
     vendors = _prepare_vendor_display(
         vendor_population
@@ -663,11 +765,11 @@ def build_vm_007(
             columns=OUTPUT_COLUMNS
         )
 
-    result = vendors.merge(
-        change_summary,
+    result = qualifying_details.merge(
+        vendors,
         on="Vendor Code",
         how="inner",
-        validate="many_to_one",
+        validate="many_to_many",
     )
 
     if result.empty:
@@ -691,9 +793,19 @@ def build_vm_007(
                 "Company",
                 "CoCo",
                 "Vendor Code",
+                "Change Date",
+                "Change Time",
+                "Change Document",
+                "Changed Record Key",
+                "Changed Field",
             ],
             ascending=[
                 False,
+                True,
+                True,
+                True,
+                True,
+                True,
                 True,
                 True,
                 True,
@@ -764,6 +876,9 @@ def run_vm_007(
         context=context,
         sheet_name=SHEET_NAME,
         dataframe=output,
+        date_columns=[
+            "Change Date",
+        ],
         integer_columns=[
             "Cambios",
         ],
@@ -774,44 +889,76 @@ def run_vm_007(
         stage_started,
     )
 
+    qualifying_vendor_count = (
+        output["Vendor Code"].nunique()
+        if not output.empty
+        else 0
+    )
+
+    qualifying_company_vendor_count = (
+        output.loc[
+            :,
+            [
+                "CoCo",
+                "Vendor Code",
+            ],
+        ]
+        .drop_duplicates()
+        .shape[0]
+        if not output.empty
+        else 0
+    )
+
     print(
         f"{CONTROL_ID} analysis period: "
         f"{date_from:%Y-%m-%d} to {date_to:%Y-%m-%d}"
     )
     print(
-        f"{CONTROL_ID} minimum distinct change events: "
+        f"{CONTROL_ID} minimum distinct change events from PARAM1: "
         f"{threshold}"
     )
     print(
         f"{CONTROL_ID} vendor source rows: "
-        f"{vendor_metrics['source_rows']}"
+        f"{vendor_metrics.get('source_rows', 0)}"
     )
     print(
-        f"{CONTROL_ID} vendor master rows: "
-        f"{vendor_metrics['master_rows']}"
+        f"{CONTROL_ID} vendor master rows before company filter: "
+        f"{vendor_metrics.get('master_rows_before_company', 0)}"
+    )
+    print(
+        f"{CONTROL_ID} vendor master rows after company filter: "
+        f"{vendor_metrics.get('master_rows', 0)}"
     )
     print(
         f"{CONTROL_ID} rows excluded by CONFIG company: "
-        f"{vendor_metrics['excluded_company']}"
+        f"{vendor_metrics.get('excluded_company', 0)}"
     )
     print(
         f"{CONTROL_ID} valid vendor rows: "
-        f"{vendor_metrics['output_rows']}"
+        f"{vendor_metrics.get('output_rows', 0)}"
     )
     print(
         f"{CONTROL_ID} CDHDR rows: "
-        f"{change_metrics['header_rows']}"
+        f"{change_metrics.get('header_rows', 0)}"
     )
     print(
         f"{CONTROL_ID} CDPOS rows: "
-        f"{change_metrics['position_rows']}"
+        f"{change_metrics.get('position_rows', 0)}"
     )
     print(
         f"{CONTROL_ID} source change events: "
-        f"{change_metrics['change_events']}"
+        f"{change_metrics.get('change_events', 0)}"
     )
     print(
-        f"{CONTROL_ID} vendors meeting the threshold: "
+        f"{CONTROL_ID} qualifying distinct vendors in output: "
+        f"{qualifying_vendor_count}"
+    )
+    print(
+        f"{CONTROL_ID} qualifying company/vendor combinations: "
+        f"{qualifying_company_vendor_count}"
+    )
+    print(
+        f"{CONTROL_ID} exception detail rows: "
         f"{len(output)}"
     )
 

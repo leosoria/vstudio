@@ -1,14 +1,13 @@
 """
-VM_008 - Vendors whose name matches an active employee name.
+VM_008 - Vendors whose name matches a Logicalis employee name.
 
-Objective
----------
-Identify vendors whose normalized name is identical to the normalized name of
-an active employee belonging to the same company.
+Logicalis employees are records in the VM vendor master whose Vendor Code
+starts with F and whose Account Group is ZFUN. Employee records with central
+or company deletion flags are excluded.
 
-Vendor and employee file discovery, source validation, SAP identifier
-normalization, employee-period validation and common vendor exclusions are
-delegated to core.vm_common.
+The supplier population is obtained through the common VM valid-population
+rules. Matching is exact after name normalization and is restricted to the
+same company.
 """
 
 import re
@@ -21,10 +20,10 @@ import pandas as pd
 from core.vm_common import (
     build_vendor_master_population,
     get_valid_vendor_population,
-    load_vm_employees,
+    is_blank,
     load_vm_vendors,
     normalize_company,
-    normalize_employee_code,
+    normalize_upper_text,
     normalize_vendor_code,
     safe_text,
     write_vm_control_sheet,
@@ -33,6 +32,9 @@ from core.vm_common import (
 
 CONTROL_ID = "VM_008"
 SHEET_NAME = "VM08"
+
+EMPLOYEE_CODE_PREFIX = "F"
+EMPLOYEE_ACCOUNT_GROUP = "ZFUN"
 
 OUTPUT_COLUMNS = [
     "Company",
@@ -56,6 +58,15 @@ _EMPLOYEE_REQUIRED_COLUMNS = {
     "Employee Name",
 }
 
+_EMPLOYEE_SOURCE_REQUIRED_COLUMNS = {
+    "Company",
+    "Vendor Code",
+    "Vendor Name",
+    "Account Group",
+    "Central Deletion Flag",
+    "Company Deletion Flag",
+}
+
 _ALL_COMPANIES = {
     "ALL",
     "*",
@@ -68,7 +79,7 @@ def _print_timing(
     stage_name: str,
     started: float,
 ) -> float:
-    """Print one lightweight stage timing and return its completion time."""
+    """Print one execution-stage duration and return its completion time."""
     finished = perf_counter()
 
     print(
@@ -79,17 +90,27 @@ def _print_timing(
     return finished
 
 
+def _empty_output() -> pd.DataFrame:
+    """Return an empty VM08 output with the exact required schema."""
+    return pd.DataFrame(
+        columns=OUTPUT_COLUMNS
+    )
+
+
 def _normalize_name(
     value: Any,
 ) -> str:
     """
     Build an exact-comparison name key.
 
-    The key is uppercase, accent-free and contains only letters, numbers and
-    single spaces. Punctuation is replaced with spaces. No name components,
-    corporate words or other tokens are removed.
+    The key is uppercase and accent-free. Punctuation is replaced with spaces
+    and consecutive whitespace is collapsed. No words or name components are
+    removed and no approximate comparison is performed.
     """
-    text = safe_text(value).upper()
+    text = safe_text(
+        value
+    ).upper()
+
     decomposed = unicodedata.normalize(
         "NFKD",
         text,
@@ -98,12 +119,17 @@ def _normalize_name(
     without_diacritics = "".join(
         character
         for character in decomposed
-        if not unicodedata.combining(character)
+        if not unicodedata.combining(
+            character
+        )
     )
 
     punctuation_as_spaces = "".join(
         character
-        if character.isalnum() or character.isspace()
+        if (
+            character.isalnum()
+            or character.isspace()
+        )
         else " "
         for character in without_diacritics
     )
@@ -118,12 +144,7 @@ def _normalize_name(
 def _normalized_names(
     series: pd.Series,
 ) -> pd.Series:
-    """
-    Normalize each distinct source name once and map it back to the population.
-
-    This avoids repeating Python Unicode normalization for every row while
-    retaining a vectorized pandas comparison and merge.
-    """
+    """Normalize each distinct source name once and map it back."""
     source = (
         series.astype("string")
         .fillna("")
@@ -144,7 +165,9 @@ def _normalized_names(
     )
 
     return (
-        source.map(lookup)
+        source.map(
+            lookup
+        )
         .fillna("")
     )
 
@@ -153,10 +176,10 @@ def _configured_companies(
     context: dict[str, Any],
 ) -> set[str]:
     """
-    Return normalized company codes configured for VM.
+    Return normalized configured companies.
 
-    An empty set means every company is included. Empty values, ALL, *,
-    TODAS and TODOS are treated as all companies.
+    An empty set means all companies. Empty values, None, ALL, *, TODAS and
+    TODOS are interpreted as all companies.
     """
     module_config = context.get(
         "module"
@@ -201,8 +224,14 @@ def _configured_companies(
             return set()
 
         raw_values = (
-            text.replace(";", ",")
-            .replace("|", ",")
+            text.replace(
+                ";",
+                ",",
+            )
+            .replace(
+                "|",
+                ",",
+            )
             .split(",")
         )
 
@@ -224,12 +253,7 @@ def _filter_companies(
     dataframe: pd.DataFrame,
     companies: set[str],
 ) -> tuple[pd.DataFrame, int]:
-    """
-    Apply the CONFIG company filter.
-
-    Return the filtered population and the number of rows excluded by the
-    configured companies.
-    """
+    """Filter a population by configured company codes."""
     if not companies:
         return (
             dataframe.copy()
@@ -247,22 +271,215 @@ def _filter_companies(
         companies
     )
 
-    excluded_rows = int(
-        (~included).sum()
+    return (
+        dataframe.loc[
+            included
+        ]
+        .copy()
+        .reset_index(drop=True),
+        int(
+            (~included).sum()
+        ),
+    )
+
+
+def _logicalis_employee_mask(
+    vendor_master: pd.DataFrame,
+) -> pd.Series:
+    """
+    Identify Logicalis employees by the functional F-code rule.
+
+    Account Group is not used as an employee-identification condition because
+    valid employee records may belong to an Account Group other than ZFUN.
+    """
+    required = {
+        "Company",
+        "Vendor Code",
+        "Vendor Name",
+        "Central Deletion Flag",
+        "Company Deletion Flag",
+    }
+
+    missing = sorted(
+        required.difference(
+            vendor_master.columns
+        )
+    )
+
+    if missing:
+        raise ValueError(
+            f"{CONTROL_ID}: employee source is missing columns: "
+            f"{missing}."
+        )
+
+    vendor_codes = vendor_master[
+        "Vendor Code"
+    ].map(
+        normalize_vendor_code
+    )
+
+    return vendor_codes.str.startswith(
+        EMPLOYEE_CODE_PREFIX,
+        na=False,
+    )
+
+
+def _exclude_employee_codes_from_suppliers(
+    vendor_population: pd.DataFrame,
+) -> tuple[pd.DataFrame, int]:
+    """
+    Remove every F-code record from the supplier population.
+
+    The common valid-vendor rules exclude the usual employee Account Group,
+    but F-code records belonging to another Account Group may survive those
+    rules. VM08-VM11 must never treat an F-code record as a supplier.
+    """
+    if "Vendor Code" not in vendor_population.columns:
+        raise ValueError(
+            f"{CONTROL_ID}: supplier population is missing "
+            "'Vendor Code'."
+        )
+
+    vendor_codes = vendor_population[
+        "Vendor Code"
+    ].map(
+        normalize_vendor_code
+    )
+
+    employee_code = vendor_codes.str.startswith(
+        EMPLOYEE_CODE_PREFIX,
+        na=False,
     )
 
     return (
-        dataframe.loc[included]
+        vendor_population.loc[
+            ~employee_code
+        ]
         .copy()
         .reset_index(drop=True),
-        excluded_rows,
+        int(
+            employee_code.sum()
+        ),
     )
 
 
-def _empty_output() -> pd.DataFrame:
-    """Return an empty VM08 output with the exact required schema."""
-    return pd.DataFrame(
-        columns=OUTPUT_COLUMNS
+def _build_employee_population(
+    vendor_master: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """
+    Build active Logicalis employees from the VM vendor master.
+
+    Employee records with central or company deletion flags are excluded.
+    """
+    employee_mask = _logicalis_employee_mask(
+        vendor_master
+    )
+
+    candidates = vendor_master.loc[
+        employee_mask
+    ].copy()
+
+    central_deleted = candidates[
+        "Central Deletion Flag"
+    ].map(
+        lambda value: not is_blank(
+            value
+        )
+    )
+
+    company_deleted = candidates[
+        "Company Deletion Flag"
+    ].map(
+        lambda value: not is_blank(
+            value
+        )
+    )
+
+    deleted = (
+        central_deleted
+        | company_deleted
+    )
+
+    employees = candidates.loc[
+        ~deleted,
+        [
+            "Company",
+            "Vendor Code",
+            "Vendor Name",
+        ],
+    ].copy()
+
+    employees = employees.rename(
+        columns={
+            "Vendor Code": "Employee Code",
+            "Vendor Name": "Employee Name",
+        }
+    )
+
+    employees["Company"] = employees[
+        "Company"
+    ].map(
+        normalize_company
+    )
+
+    employees["Employee Code"] = employees[
+        "Employee Code"
+    ].map(
+        normalize_vendor_code
+    )
+
+    employees["Employee Name"] = employees[
+        "Employee Name"
+    ].map(
+        safe_text
+    )
+
+    employees = (
+        employees.drop_duplicates(
+            subset=[
+                "Company",
+                "Employee Code",
+                "Employee Name",
+            ],
+            keep="first",
+        )
+        .sort_values(
+            [
+                "Company",
+                "Employee Code",
+            ],
+            kind="mergesort",
+        )
+        .reset_index(drop=True)
+    )
+
+    metrics = {
+        "employee_candidate_rows": len(
+            candidates
+        ),
+        "employee_excluded_central_deletion": int(
+            central_deleted.sum()
+        ),
+        "employee_excluded_company_deletion": int(
+            company_deleted.sum()
+        ),
+        "employee_excluded_any_deletion": int(
+            deleted.sum()
+        ),
+        "employee_output_rows": len(
+            employees
+        ),
+        "distinct_employees": employees[
+            [
+                "Company",
+                "Employee Code",
+            ]
+        ].drop_duplicates().shape[0],
+    }
+
+    return (
+        employees,
+        metrics,
     )
 
 
@@ -271,24 +488,10 @@ def build_vm_008(
     employee_population: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Return vendors matching active employees by company and normalized name.
+    Return exact supplier/employee name matches within the same company.
 
-    This is the pure analytical portion of VM_008. It does not read files,
-    write workbooks or use the runner context.
-
-    Parameters
-    ----------
-    vendor_population:
-        Valid vendor population after common VM exclusions.
-    employee_population:
-        Active employee population whose validity overlaps the configured
-        period.
-
-    Returns
-    -------
-    pandas.DataFrame
-        One row per unique CoCo + Vendor Code + Employee Code, containing
-        exactly OUTPUT_COLUMNS.
+    This pure analytical function does not read files, write workbooks or
+    access the runner context.
     """
     missing_vendor_columns = sorted(
         _VENDOR_REQUIRED_COLUMNS.difference(
@@ -337,16 +540,16 @@ def build_vm_008(
         normalize_company
     )
 
-    vendors["Vendor Code"] = vendors[
-        "Vendor Code"
-    ].map(
-        normalize_vendor_code
-    )
-
     vendors["Company Name"] = vendors[
         "Company Name"
     ].map(
         safe_text
+    )
+
+    vendors["Vendor Code"] = vendors[
+        "Vendor Code"
+    ].map(
+        normalize_vendor_code
     )
 
     vendors["Vendor Name"] = vendors[
@@ -356,7 +559,9 @@ def build_vm_008(
     )
 
     vendors["_Normalized Name"] = _normalized_names(
-        vendors["Vendor Name"]
+        vendors[
+            "Vendor Name"
+        ]
     )
 
     employees["Company"] = employees[
@@ -368,7 +573,7 @@ def build_vm_008(
     employees["Employee Code"] = employees[
         "Employee Code"
     ].map(
-        normalize_employee_code
+        normalize_vendor_code
     )
 
     employees["Employee Name"] = employees[
@@ -378,7 +583,9 @@ def build_vm_008(
     )
 
     employees["_Normalized Name"] = _normalized_names(
-        employees["Employee Name"]
+        employees[
+            "Employee Name"
+        ]
     )
 
     comparable_vendors = vendors.loc[
@@ -436,6 +643,12 @@ def build_vm_008(
         validate="many_to_many",
     )
 
+    matches = matches.loc[
+        matches["Vendor Code"].ne(
+            matches["Employee Code"]
+        )
+    ].copy()
+
     if matches.empty:
         return _empty_output()
 
@@ -483,7 +696,10 @@ def build_vm_008(
             ],
             kind="mergesort",
         )
-        .loc[:, OUTPUT_COLUMNS]
+        .loc[
+            :,
+            OUTPUT_COLUMNS,
+        ]
         .reset_index(drop=True)
     )
 
@@ -502,55 +718,74 @@ def run_vm_008(
         context
     )
 
-    vendor_master = build_vendor_master_population(
-        vendor_source
+    vendor_master_all_companies = (
+        build_vendor_master_population(
+            vendor_source
+        )
     )
 
     vendor_master_rows = len(
+        vendor_master_all_companies
+    )
+
+    all_company_employee_candidates = int(
+        _logicalis_employee_mask(
+            vendor_master_all_companies
+        ).sum()
+    )
+
+    (
+        vendor_master,
+        excluded_company_rows,
+    ) = _filter_companies(
+        vendor_master_all_companies,
+        companies,
+    )
+
+    configured_employee_candidates = int(
+        _logicalis_employee_mask(
+            vendor_master
+        ).sum()
+    )
+
+    excluded_employee_company_rows = (
+        all_company_employee_candidates
+        - configured_employee_candidates
+    )
+
+    (
+        employee_population,
+        employee_metrics,
+    ) = _build_employee_population(
         vendor_master
     )
 
     (
-        vendor_master,
-        excluded_vendor_company_rows,
-    ) = _filter_companies(
-        vendor_master,
-        companies,
-    )
-
-    (
-        vendor_population,
+        vendor_population_before_employee_separation,
         vendor_metrics,
     ) = get_valid_vendor_population(
         vendor_master
     )
 
     (
-        employee_population,
-        employee_metrics,
-    ) = load_vm_employees(
-        context
+        vendor_population,
+        employee_codes_removed_from_suppliers,
+    ) = _exclude_employee_codes_from_suppliers(
+        vendor_population_before_employee_separation
     )
 
-    if (
-        employee_population is None
-        or not employee_metrics.get(
-            "available",
-            False,
-        )
-    ):
-        raise FileNotFoundError(
-            f"{CONTROL_ID} requires the employee file for the configured "
-            "period, but the expected VM employee workbook was not found."
+    if employee_population.empty:
+        raise ValueError(
+            f"{CONTROL_ID}: no active Logicalis employees were found "
+            f"using Vendor Code prefix {EMPLOYEE_CODE_PREFIX!r} after "
+            "applying configured-company and deletion-flag rules."
         )
 
-    (
-        employee_population,
-        excluded_employee_company_rows,
-    ) = _filter_companies(
-        employee_population,
-        companies,
-    )
+    if vendor_population.empty:
+        raise ValueError(
+            f"{CONTROL_ID}: valid supplier population is empty after "
+            "the configured company and common VM exclusion rules."
+        )
 
     stage_started = _print_timing(
         "input load and population validation",
@@ -600,28 +835,33 @@ def run_vm_008(
     )
 
     print(
-        f"{CONTROL_ID} vendor rows excluded by CONFIG company: "
-        f"{excluded_vendor_company_rows}"
+        f"{CONTROL_ID} rows excluded by CONFIG company: "
+        f"{excluded_company_rows}"
     )
 
     print(
-        f"{CONTROL_ID} valid vendor rows: "
-        f"{vendor_metrics.get('output_rows', len(vendor_population))}"
+        f"{CONTROL_ID} valid population before F separation: "
+        f"{vendor_metrics.get('output_rows', len(vendor_population_before_employee_separation))}"
     )
 
     print(
-        f"{CONTROL_ID} employee source rows: "
-        f"{employee_metrics.get('source_rows', 0)}"
+        f"{CONTROL_ID} F-code rows removed from suppliers: "
+        f"{employee_codes_removed_from_suppliers}"
     )
 
     print(
-        f"{CONTROL_ID} active period employee rows: "
-        f"{employee_metrics.get('valid_period_rows', 0)}"
+        f"{CONTROL_ID} valid supplier rows: "
+        f"{len(vendor_population)}"
     )
 
     print(
-        f"{CONTROL_ID} distinct employees: "
-        f"{employee_metrics.get('distinct_employees', 0)}"
+        f"{CONTROL_ID} employee identification rule: "
+        f"Vendor Code starts with {EMPLOYEE_CODE_PREFIX!r}"
+    )
+
+    print(
+        f"{CONTROL_ID} employee candidate rows before CONFIG company: "
+        f"{all_company_employee_candidates}"
     )
 
     print(
@@ -630,22 +870,44 @@ def run_vm_008(
     )
 
     print(
+        f"{CONTROL_ID} employee candidate rows after CONFIG company: "
+        f"{employee_metrics.get('employee_candidate_rows', 0)}"
+    )
+
+    print(
+        f"{CONTROL_ID} employees excluded by Central Deletion Flag: "
+        f"{employee_metrics.get('employee_excluded_central_deletion', 0)}"
+    )
+
+    print(
+        f"{CONTROL_ID} employees excluded by Company Deletion Flag: "
+        f"{employee_metrics.get('employee_excluded_company_deletion', 0)}"
+    )
+
+    print(
+        f"{CONTROL_ID} employees excluded by any deletion flag: "
+        f"{employee_metrics.get('employee_excluded_any_deletion', 0)}"
+    )
+
+    print(
+        f"{CONTROL_ID} active employee rows: "
+        f"{employee_metrics.get('employee_output_rows', len(employee_population))}"
+    )
+
+    print(
+        f"{CONTROL_ID} distinct active employees: "
+        f"{employee_metrics.get('distinct_employees', 0)}"
+    )
+
+    print(
         f"{CONTROL_ID} exception rows: "
         f"{len(output)}"
     )
 
-    warnings = [
-        *vendor_metrics.get(
-            "warnings",
-            [],
-        ),
-        *employee_metrics.get(
-            "warnings",
-            [],
-        ),
-    ]
-
-    for warning in warnings:
+    for warning in vendor_metrics.get(
+        "warnings",
+        [],
+    ):
         print(
             f"WARNING: {warning}"
         )

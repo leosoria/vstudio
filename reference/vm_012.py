@@ -1,10 +1,12 @@
-# VM_012 objective: identify valid vendors without a resolved Business Number.
-# Functional priority agreed for the initial LBR/SAP ECC implementation:
-# Tax Number 1, Tax Number 2, Tax Number 3, Tax Number 4, Tax Number 5,
-# VAT Registration Number. The first nonblank value wins. Audit may revise
-# this shared, explicit order in the future.
+"""
+VM_012 objective: identify valid vendors without a resolved Business Number.
+Functional priority agreed for the initial LBR/SAP ECC implementation:
+Tax Number 1, Tax Number 2, Tax Number 3, Tax Number 4, Tax Number 5,
+VAT Registration Number. The first nonblank value wins. Audit may revise
+this shared, explicit order in the future.
 
-"""VM_012 - Valid vendors without a Business Number."""
+VM_012 - Valid vendors without a Business Number
+"""
 
 import re
 from time import perf_counter

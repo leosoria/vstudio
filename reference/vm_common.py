@@ -49,7 +49,7 @@ VM_HEADER_ROW = 1
 VM_VENDOR_FILE_TEMPLATE = "LBR VM_VENDORS_{period}.xlsx"
 VM_BSIK_FILE_TEMPLATE = "LBR VM_VPBSIK_{period}.xlsx"
 VM_BSAK_FILE_TEMPLATE = "LBR VM_VPBSAK_{period}.xlsx"
-VM_BKPF_FILE_TEMPLATE = "LBR_VM_BKPF_{period}.xlsx"
+VM_BKPF_FILE_TEMPLATE = "LBR_VM_BKPF_PS_{period}.xlsx"
 VM_EMPLOYEE_FILE_TEMPLATE = "LBR_VM_EMP_{period}.xlsx"
 VM_BANK_CDHDR_FILE_TEMPLATE = "LBR VM_BANK_CDHDR_{period}.xlsx"
 VM_BANK_CDPOS_FILE_TEMPLATE = "LBR VM_BANK_CDPOS_{period}.xlsx"
@@ -132,30 +132,32 @@ POSTING_HEADER_REQUIRED_COLUMNS = (
 )
 
 POSTING_HEADER_PHYSICAL_COLUMNS = (
-    "Company Code",
-    "Document Number",
-    "Fiscal Year",
-    "Posting Date",
+    "CoCd",
+    "DocumentNo",
+    "Year",
+    "Pstng Date",
     "User name",
 )
 
+
 POSTING_HEADER_ALIASES = {
     "Company": (
-        "Company Code",
+        "CoCd",
     ),
     "Fiscal Year": (
-        "Fiscal Year",
+        "Year",
     ),
     "Accounting Document": (
-        "Document Number",
+        "DocumentNo",
     ),
     "Posting Date": (
-        "Posting Date",
+        "Pstng Date",
     ),
     "Posting User": (
         "User name",
     ),
 }
+
 
 CHANGE_KEY_COLUMNS = (
     "Change Object Class",

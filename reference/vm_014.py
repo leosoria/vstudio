@@ -1,20 +1,11 @@
-# VM_014 objective: identify valid vendors without a reported primary phone.
-# Functional phone definition for the initial LBR/SAP ECC implementation:
-# Phone1, sourced from Telephone 1 / LFA1-TELF1 in vm_vendors.
-# A vendor is an exception when Phone1 is blank after safe_text.
-# VM_014 identifies absence only; it does not validate phone format.
-# Audit may revise this explicit definition in the future.
-# Phone1 is not combined with other telephone fields, and no phone is inferred
-# from addresses, banks, contacts, or any other source.
-# No minimum digit count or country-specific validation is applied, and a
-# reported value is never transformed into blank to determine absence.
-# Nonblank signs, letters, or zeroes remain reported values: this control tests
-# absence, not phone-format quality.
-# The historical control used Phone1 and selected blank Phone1 values.
-# The initial LBR/SAP ECC definition uses canonical Phone1, already mapped by
-# core.vm_common from Telephone 1 / TELF1 / LFA1-TELF1.
+"""
+VM_014 identifies valid vendors without a primary phone.
+Phone1 comes from Telephone 1 / LFA1-TELF1 in vm_vendors.
+An exception occurs when safe_text(Phone1) is blank.
+The control detects absence only, not phone validity or format.
+No alternative phone sources are used. Audit may revise this definition.
 
-"""VM_014 - Valid vendors without a reported primary phone."""
+"""
 
 from time import perf_counter
 from typing import Any

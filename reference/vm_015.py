@@ -1,29 +1,11 @@
-# VM_015 objective: identify valid vendors without reported bank master data.
-# Functional bank-data definition for the initial LBR/SAP ECC implementation:
-# vendor bank data sourced from LFBK through the canonical bank columns already
-# mapped in vm_vendors by core.vm_common.
-# A vendor is an exception when it has no bank record according to the official
-# build_vendor_bank_population semantics.
-# VM_015 identifies absence only; it does not validate bank-data quality,
-# completeness, legitimacy, format, or ownership.
-# Audit may revise this explicit definition in the future.
-# Bank data is not inferred from invoices, payments, text, addresses, contacts,
-# or any other source; BSIK and BSAK are not loaded, and company-owned bank data
-# is not used.
-# Historical OCRD, OCRB, DflAccount, HouseBank, CBU, and other SAP Business One
-# rules are intentionally not incorporated into this LBR/SAP ECC control.
-# A bank record need not have every component completed. VM_015 imposes no
-# minimum Bank Account length and validates neither IBAN, SWIFT/BIC, country
-# format, nor the existence of Bank Code in a bank catalogue.
-# Account Holder Name need not match Vendor Name, and Bank Valid From/To validity
-# is not used to determine absence.
-# A reported bank value is never turned into blank by destructive normalization.
-# VM_015 controls bank-data absence, not quality, completeness, legitimacy, or
-# validity. The historical reference defines VM15 as vendors with no bank
-# data in any source; this initial LBR/SAP ECC implementation instead uses only
-# the canonical LFBK columns already mapped by core.vm_common in vm_vendors.
 
-"""VM_015 - Valid vendors without reported LFBK bank master data."""
+"""
+VM_015 - Valid vendors without reported LFBK bank master data
+
+Bank presence follows build_vendor_bank_population using LFBK data.
+VM_015 detects absence only; it does not validate bank-data quality.
+
+"""
 
 from time import perf_counter
 from typing import Any

@@ -1,13 +1,7 @@
-# VM_016 objective: identify valid vendors whose only reported central address
-# is a post-office-box address rather than a physical street address.
-# For the initial LBR/SAP ECC implementation, the address source is the canonical
-# LFA1 central-address data already mapped in vm_vendors by core.vm_common.
-# LBR currently provides one central vendor address, so a valid vendor is an
-# exception when its canonical Street matches an approved PO Box pattern.
-# Blank addresses do not qualify, and no address is inferred from invoices,
-# payments, contacts, bank data, BSIK, BSAK, or other sources.
 
-"""VM_016 - Valid vendors with only a post-office-box central address."""
+"""
+VM_016 - Valid vendors with only a post-office-box central address
+"""
 
 import re
 from time import perf_counter
