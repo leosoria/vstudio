@@ -547,8 +547,46 @@ def load_dependencies():
     from modules.GL.gl_007 import run_gl_007
     from modules.GL.gl_008 import run_gl_008
     from modules.GL.gl_009 import run_gl_009
+    from modules.GL.gl_010 import run_gl_010
+    from modules.GL.gl_011 import run_gl_011
+    from modules.GL.gl_012 import run_gl_012
+    from modules.GL.gl_013 import run_gl_013
+    from modules.GL.gl_014 import run_gl_014
+    from modules.GL.gl_015 import run_gl_015
+    from modules.GL.gl_016 import run_gl_016
+
+    from modules.PO.po_001 import run_po_001
+    from modules.PO.po_002 import run_po_002
+    from modules.PO.po_003 import run_po_003
+    from modules.PO.po_004 import run_po_004
+    from modules.PO.po_005 import run_po_005
+    from modules.PO.po_006 import run_po_006
+    from modules.PO.po_007 import run_po_007
+    from modules.PO.po_008 import run_po_008
+    from modules.PO.po_009 import run_po_009
+    from modules.PO.po_010 import run_po_010
+    from modules.PO.po_011 import run_po_011
+
+    from modules.VM.vm_001 import run_vm_001
+    from modules.VM.vm_002 import run_vm_002
+    from modules.VM.vm_003 import run_vm_003
+    from modules.VM.vm_004 import run_vm_004
+    from modules.VM.vm_005 import run_vm_005
+    from modules.VM.vm_006 import run_vm_006
+    from modules.VM.vm_007 import run_vm_007
+    from modules.VM.vm_008 import run_vm_008
+    from modules.VM.vm_009 import run_vm_009
+    from modules.VM.vm_010 import run_vm_010
+    from modules.VM.vm_011 import run_vm_011
+    from modules.VM.vm_012 import run_vm_012
+    from modules.VM.vm_013 import run_vm_013
+    from modules.VM.vm_014 import run_vm_014
+    from modules.VM.vm_015 import run_vm_015
+    from modules.VM.vm_016 import run_vm_016
+    from modules.VM.vm_017 import run_vm_017
 
     control_runners = {
+        # AR
         "AR_001": run_ar_001,
         "AR_002": run_ar_002,
         "AR_003": run_ar_003,
@@ -559,10 +597,14 @@ def load_dependencies():
         "CD_002": run_cd_002,
         "CD_003": run_cd_003,
         "CD_004": run_cd_004,
+
+        # FAM
         "FAM_001": run_fam_001,
         "FAM_002": run_fam_002,
         "FAM_003": run_fam_003,
         "FAM_004": run_fam_004,
+
+        # GL
         "GL_001": run_gl_001,
         "GL_002": run_gl_002,
         "GL_003": run_gl_003,
@@ -572,6 +614,45 @@ def load_dependencies():
         "GL_007": run_gl_007,
         "GL_008": run_gl_008,
         "GL_009": run_gl_009,
+        "GL_010": run_gl_010,
+        "GL_011": run_gl_011,
+        "GL_012": run_gl_012,
+        "GL_013": run_gl_013,
+        "GL_014": run_gl_014,
+        "GL_015": run_gl_015,
+        "GL_016": run_gl_016,
+
+        # PO
+        "PO_001": run_po_001,
+        "PO_002": run_po_002,
+        "PO_003": run_po_003,
+        "PO_004": run_po_004,
+        "PO_005": run_po_005,
+        "PO_006": run_po_006,
+        "PO_007": run_po_007,
+        "PO_008": run_po_008,
+        "PO_009": run_po_009,
+        "PO_010": run_po_010,
+        "PO_011": run_po_011,
+
+        # VM
+        "VM_001": run_vm_001,
+        "VM_002": run_vm_002,
+        "VM_003": run_vm_003,
+        "VM_004": run_vm_004,
+        "VM_005": run_vm_005,
+        "VM_006": run_vm_006,
+        "VM_007": run_vm_007,
+        "VM_008": run_vm_008,
+        "VM_009": run_vm_009,
+        "VM_010": run_vm_010,
+        "VM_011": run_vm_011,
+        "VM_012": run_vm_012,
+        "VM_013": run_vm_013,
+        "VM_014": run_vm_014,
+        "VM_015": run_vm_015,
+        "VM_016": run_vm_016,
+        "VM_017": run_vm_017,
     }
 
     return read_active_configuration, control_runners
