@@ -1,0 +1,99 @@
+﻿LBR FAM - INPUT STRUCTURE
+Generated: 2026-10-14 17:29:58
+Files found: 3
+Row counts include any totals or summary rows in the input.
+Headers are read from the first row of each worksheet.
+No asset-level records are included.
+
+========================================================================
+FILE: LBR FAM_AR_20260731.XLSX
+Worksheets: 1
+
+SHEET: Sheet1
+Rows: 10343
+Columns: 14
+
+ALL COLUMNS:
+A | 001 | Asset
+B | 002 | Subnumber
+C | 003 | Company Code
+D | 004 | Asset description
+E | 005 | Capitalized on
+F | 006 |     Acquis.val.
+G | 007 |      Accum.dep.
+H | 008 |       Book val.
+I | 009 | Business Area
+J | 010 | Asset Class
+K | 011 | Balance sheet item
+L | 012 | Bal.sh.acct APC
+M | 013 | Ord.dep.start date
+N | 014 | Currency
+
+POSSIBLE LIFE / CLASS / DEPRECIATION COLUMNS:
+E | 005 | Capitalized on | Populated rows: 10342
+I | 009 | Business Area | Populated rows: 633
+J | 010 | Asset Class | Populated rows: 10342
+
+========================================================================
+FILE: LBR FAM_BAL_20260731.XLSX
+Worksheets: 1
+
+SHEET: Sheet1
+Rows: 20826
+Columns: 17
+
+ALL COLUMNS:
+A | 001 | CoCd
+B | 002 | Asset
+C | 003 | SNo.
+D | 004 | Class
+E | 005 | Asset description
+F | 006 | Ar.
+G | 007 | Year
+H | 008 | Cum.acquis.val.
+I | 009 | Crcy
+J | 010 | Accm.ord.deprec
+K | 011 | Crcy.1
+L | 012 | Cum.Spec.dep.
+M | 013 | Crcy.2
+N | 014 | Cum.unplnd.dep.
+O | 015 | Crcy.3
+P | 016 | Cum.reserves
+Q | 017 | Crcy.4
+
+POSSIBLE LIFE / CLASS / DEPRECIATION COLUMNS:
+D | 004 | Class | Populated rows: 20825
+J | 010 | Accm.ord.deprec | Populated rows: 20826
+
+========================================================================
+FILE: LBR FAM_MOV_20260731.XLSX
+Worksheets: 1
+
+SHEET: Sheet1
+Rows: 2080
+Columns: 17
+
+ALL COLUMNS:
+A | 001 | CoCd
+B | 002 | Asset
+C | 003 | SNo.
+D | 004 | Class
+E | 005 | Asset description
+F | 006 | Ar.
+G | 007 | Year
+H | 008 | DocumentNo
+I | 009 | Itm
+J | 010 | Transaction Type
+K | 011 | AsstVal date
+L | 012 | Amount posted
+M | 013 | Crcy
+N | 014 | Ord.dep.on trans
+O | 015 | Crcy.1
+P | 016 | S.dep.on trans.
+Q | 017 | Crcy.2
+
+POSSIBLE LIFE / CLASS / DEPRECIATION COLUMNS:
+D | 004 | Class | Populated rows: 2079
+
+========================================================================
+Read errors: 0
