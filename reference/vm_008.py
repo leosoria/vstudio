@@ -32,6 +32,7 @@ from core.vm_common import (
 
 CONTROL_ID = "VM_008"
 SHEET_NAME = "VM08"
+PATCH_VERSION = "VM08_AUDIT_PATCH_20261008"
 
 EMPLOYEE_CODE_PREFIX = "F"
 EMPLOYEE_ACCOUNT_GROUP = "ZFUN"
@@ -710,6 +711,8 @@ def run_vm_008(
     """Execute VM08 and replace only the VM08 result worksheet."""
     started = perf_counter()
 
+    print(f"{CONTROL_ID} patch: {PATCH_VERSION}; script: {__file__}")
+
     companies = _configured_companies(
         context
     )
@@ -772,6 +775,42 @@ def run_vm_008(
         employee_codes_removed_from_suppliers,
     ) = _exclude_employee_codes_from_suppliers(
         vendor_population_before_employee_separation
+    )
+
+    # Local ACTIVE rule applied only to suppliers, after common exclusions.
+    status_fields = {
+        "Central Deletion Flag": "LOEVM",
+        "Payment Block": "ZAHLS",
+        "Central Posting Block": "SPERR",
+        "Purchasing Block": "SPERM",
+        "Central Payment Block": "SPERZ",
+    }
+
+    missing = sorted(set(status_fields).difference(vendor_population.columns))
+    if missing:
+        raise ValueError(f"{CONTROL_ID}: missing status fields: {missing}")
+
+    excluded_status = pd.Series(False, index=vendor_population.index)
+
+    for field, sap_field in status_fields.items():
+        flagged = vendor_population[field].map(normalize_upper_text).eq("X")
+        print(
+            f"{CONTROL_ID} supplier rows with {sap_field}=X: "
+            f"{int(flagged.sum())}"
+        )
+        excluded_status |= flagged
+
+    vendor_metrics["excluded_local_status"] = int(excluded_status.sum())
+
+    vendor_population = (
+        vendor_population.loc[~excluded_status]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    print(
+        f"{CONTROL_ID} supplier rows excluded by ACTIVE rule: "
+        f"{int(excluded_status.sum())}"
     )
 
     if employee_population.empty:

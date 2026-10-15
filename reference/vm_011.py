@@ -40,6 +40,7 @@ from core.vm_common import (
 
 CONTROL_ID = "VM_011"
 SHEET_NAME = "VM11"
+PATCH_VERSION = "VM11_AUDIT_PATCH_20261008"
 
 EMPLOYEE_CODE_PREFIX = "F"
 MASSIVE_ENTITY_THRESHOLD = 10
@@ -634,6 +635,10 @@ def _prepare_banks(
         & result[code_column].ne("")
     )
 
+    excluded_account = result["_Normalized Bank Account"].isin(
+        {"BOLETO", "INTERNACIONAL"}
+    )
+
     complete_bank = (
         result["_Normalized Bank Country"].ne("")
         & result["_Normalized Bank Code"].ne("")
@@ -643,6 +648,7 @@ def _prepare_banks(
     comparable = result.loc[
         valid_identity
         & complete_bank
+        & ~excluded_account
     ].copy()
 
     comparable["_Bank Key"] = (
@@ -672,6 +678,7 @@ def _prepare_banks(
     )
 
     metrics = {
+        "excluded_boleto_internacional": int(excluded_account.sum()),
         "input_rows": len(
             result
         ),
@@ -1185,6 +1192,8 @@ def run_vm_011(
     """Execute VM11 and replace only the VM11 result worksheet."""
     started = perf_counter()
 
+
+
     companies = _configured_companies(
         context
     )
@@ -1246,6 +1255,43 @@ def run_vm_011(
         population_before_f_separation
     )
 
+    # Local ACTIVE rule; existing common exclusions remain in force.
+    status_fields = {
+        "Central Deletion Flag": "LOEVM",
+        "Payment Block": "ZAHLS",
+        "Central Posting Block": "SPERR",
+        "Purchasing Block": "SPERM",
+        "Central Payment Block": "SPERZ",
+    }
+
+    missing = sorted(set(status_fields).difference(vendor_population.columns))
+    if missing:
+        raise ValueError(f"{CONTROL_ID}: missing status fields: {missing}")
+
+    excluded_status = pd.Series(False, index=vendor_population.index)
+
+    for field, sap_field in status_fields.items():
+        flagged = vendor_population[field].map(
+            lambda value: safe_text(value).strip().upper()
+        ).eq("X")
+
+        print(
+            f"{CONTROL_ID} supplier rows with {sap_field}=X: "
+            f"{int(flagged.sum())}"
+        )
+        excluded_status |= flagged
+
+    vendor_population = (
+        vendor_population.loc[~excluded_status]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    print(
+        f"{CONTROL_ID} supplier rows excluded by ACTIVE rule: "
+        f"{int(excluded_status.sum())}"
+    )
+
     (
         supplier_bank_rows,
         employee_bank_rows,
@@ -1271,6 +1317,15 @@ def run_vm_011(
         employee_bank_rows,
         code_column="Employee Code",
         name_column="Employee Name",
+    )
+
+    print(
+        f"{CONTROL_ID} supplier bank rows excluded as boleto/internacional: "
+        f"{supplier_bank_metrics.get('excluded_boleto_internacional', 0)}"
+    )
+    print(
+        f"{CONTROL_ID} employee bank rows excluded as boleto/internacional: "
+        f"{employee_bank_metrics.get('excluded_boleto_internacional', 0)}"
     )
 
     stage_started = _print_timing(
