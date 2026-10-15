@@ -513,149 +513,68 @@ def print_cache_cleanup_result(cache_cleanup_result, title="Python cache cleanup
 
 
 def load_dependencies():
-    """
-    Import project dependencies after cache cleanup.
-
-    This avoids trying to delete __pycache__ folders while imported modules
-    are still being initialized or locked by the current Python process.
-    """
+    """Load only the shared configuration reader."""
     from core.config_reader import read_active_configuration
 
-    from modules.AR.ar_001 import run_ar_001
-    from modules.AR.ar_002 import run_ar_002
-    from modules.AR.ar_003 import run_ar_003
-    from modules.AR.ar_004 import run_ar_004
-    from modules.AR.ar_005 import run_ar_005
-    from modules.AR.ar_006 import run_ar_006
+    return read_active_configuration
 
-    from modules.CD.cd_001 import run_cd_001
-    from modules.CD.cd_002 import run_cd_002
-    from modules.CD.cd_003 import run_cd_003
-    from modules.CD.cd_004 import run_cd_004
 
-    from modules.FAM.fam_001 import run_fam_001
-    from modules.FAM.fam_002 import run_fam_002
-    from modules.FAM.fam_003 import run_fam_003
-    from modules.FAM.fam_004 import run_fam_004
+def load_control_runners(active_controls):
+    """Import only controls enabled in config.xlsx."""
+    from importlib import import_module
+    import re
 
-    from modules.GL.gl_001 import run_gl_001
-    from modules.GL.gl_002 import run_gl_002
-    from modules.GL.gl_003 import run_gl_003
-    from modules.GL.gl_004 import run_gl_004
-    from modules.GL.gl_005 import run_gl_005
-    from modules.GL.gl_006 import run_gl_006
-    from modules.GL.gl_007 import run_gl_007
-    from modules.GL.gl_008 import run_gl_008
-    from modules.GL.gl_009 import run_gl_009
-    from modules.GL.gl_010 import run_gl_010
-    from modules.GL.gl_011 import run_gl_011
-    from modules.GL.gl_012 import run_gl_012
-    from modules.GL.gl_013 import run_gl_013
-    from modules.GL.gl_014 import run_gl_014
-    from modules.GL.gl_015 import run_gl_015
-    from modules.GL.gl_016 import run_gl_016
+    control_runners = {}
 
-    from modules.PO.po_001 import run_po_001
-    from modules.PO.po_002 import run_po_002
-    from modules.PO.po_003 import run_po_003
-    from modules.PO.po_004 import run_po_004
-    from modules.PO.po_005 import run_po_005
-    from modules.PO.po_006 import run_po_006
-    from modules.PO.po_007 import run_po_007
-    from modules.PO.po_008 import run_po_008
-    from modules.PO.po_009 import run_po_009
-    from modules.PO.po_010 import run_po_010
-    from modules.PO.po_011 import run_po_011
+    for control in active_controls:
+        control_id = normalize_excel_control_id(
+            control["id_control"]
+        )
+        module_name = str(control["module"]).strip().upper()
 
-    from modules.VM.vm_001 import run_vm_001
-    from modules.VM.vm_002 import run_vm_002
-    from modules.VM.vm_003 import run_vm_003
-    from modules.VM.vm_004 import run_vm_004
-    from modules.VM.vm_005 import run_vm_005
-    from modules.VM.vm_006 import run_vm_006
-    from modules.VM.vm_007 import run_vm_007
-    from modules.VM.vm_008 import run_vm_008
-    from modules.VM.vm_009 import run_vm_009
-    from modules.VM.vm_010 import run_vm_010
-    from modules.VM.vm_011 import run_vm_011
-    from modules.VM.vm_012 import run_vm_012
-    from modules.VM.vm_013 import run_vm_013
-    from modules.VM.vm_014 import run_vm_014
-    from modules.VM.vm_015 import run_vm_015
-    from modules.VM.vm_016 import run_vm_016
-    from modules.VM.vm_017 import run_vm_017
+        match = re.fullmatch(r"([A-Z]+)_(\d+)", control_id)
 
-    control_runners = {
-        # AR
-        "AR_001": run_ar_001,
-        "AR_002": run_ar_002,
-        "AR_003": run_ar_003,
-        "AR_004": run_ar_004,
-        "AR_005": run_ar_005,
-        "AR_006": run_ar_006,
-        "CD_001": run_cd_001,
-        "CD_002": run_cd_002,
-        "CD_003": run_cd_003,
-        "CD_004": run_cd_004,
+        if match is None or match.group(1) != module_name:
+            raise ValueError(
+                f"Invalid control ID '{control['id_control']}' "
+                f"for module '{module_name}'."
+            )
 
-        # FAM
-        "FAM_001": run_fam_001,
-        "FAM_002": run_fam_002,
-        "FAM_003": run_fam_003,
-        "FAM_004": run_fam_004,
+        if control_id in control_runners:
+            continue
 
-        # GL
-        "GL_001": run_gl_001,
-        "GL_002": run_gl_002,
-        "GL_003": run_gl_003,
-        "GL_004": run_gl_004,
-        "GL_005": run_gl_005,
-        "GL_006": run_gl_006,
-        "GL_007": run_gl_007,
-        "GL_008": run_gl_008,
-        "GL_009": run_gl_009,
-        "GL_010": run_gl_010,
-        "GL_011": run_gl_011,
-        "GL_012": run_gl_012,
-        "GL_013": run_gl_013,
-        "GL_014": run_gl_014,
-        "GL_015": run_gl_015,
-        "GL_016": run_gl_016,
+        file_stem = control_id.lower()
+        import_path = f"modules.{module_name}.{file_stem}"
+        runner_name = f"run_{file_stem}"
 
-        # PO
-        "PO_001": run_po_001,
-        "PO_002": run_po_002,
-        "PO_003": run_po_003,
-        "PO_004": run_po_004,
-        "PO_005": run_po_005,
-        "PO_006": run_po_006,
-        "PO_007": run_po_007,
-        "PO_008": run_po_008,
-        "PO_009": run_po_009,
-        "PO_010": run_po_010,
-        "PO_011": run_po_011,
+        try:
+            module = import_module(import_path)
 
-        # VM
-        "VM_001": run_vm_001,
-        "VM_002": run_vm_002,
-        "VM_003": run_vm_003,
-        "VM_004": run_vm_004,
-        "VM_005": run_vm_005,
-        "VM_006": run_vm_006,
-        "VM_007": run_vm_007,
-        "VM_008": run_vm_008,
-        "VM_009": run_vm_009,
-        "VM_010": run_vm_010,
-        "VM_011": run_vm_011,
-        "VM_012": run_vm_012,
-        "VM_013": run_vm_013,
-        "VM_014": run_vm_014,
-        "VM_015": run_vm_015,
-        "VM_016": run_vm_016,
-        "VM_017": run_vm_017,
-    }
+        except ModuleNotFoundError as error:
+            if (
+                error.name == import_path
+                or import_path.startswith(f"{error.name}.")
+            ):
+                raise ModuleNotFoundError(
+                    f"Enabled control '{control_id}' requires "
+                    f"'{import_path}', but the module was not found."
+                ) from error
+            raise
 
-    return read_active_configuration, control_runners
+        runner = getattr(module, runner_name, None)
+
+        if not callable(runner):
+            raise AttributeError(
+                f"Enabled control '{control_id}': "
+                f"'{import_path}' does not define "
+                f"callable '{runner_name}'."
+            )
+
+        control_runners[control_id] = runner
+        print(f"Loaded: {control_id}")
+
+    return control_runners
+
 
 
 def create_temp_copy(file_path):
@@ -1097,7 +1016,7 @@ def main():
 
     cleanup_python_cache(project_folder)
 
-    read_active_configuration, control_runners = load_dependencies()
+    read_active_configuration = load_dependencies()
 
     print_project_paths(
         project_folder=project_folder,
@@ -1150,6 +1069,10 @@ def main():
             active_controls=active_controls,
         )
         print("TEST_STATUS initialized.")
+        print()
+
+        print_header("Loading enabled controls")
+        control_runners = load_control_runners(active_controls)
         print()
 
         run_active_controls(
