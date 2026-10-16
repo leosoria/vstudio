@@ -1,0 +1,928 @@
+LBR - CATALOGO DE INPUTS DE TODOS LOS MODULOS
+======================================================================
+Generado: 2026-10-16T16:29:57
+Archivos encontrados: 28
+
+Solo metadatos y encabezados. No contiene filas de datos.
+Se revisan todas las hojas; encabezados tomados de la fila 1.
+Las cantidades de filas son aproximadas y pueden incluir totales
+o filas formateadas. No representan una validacion de cobertura.
+Los campos tecnicos SAP no se deducen de los encabezados.
+
+======================================================================
+Archivo: FxRates_20260228.xlsx
+Ruta relativa: input/FxRates_20260228.xlsx
+Tamano en bytes: 41446
+Hojas: Hoja1
+
+Hoja: Hoja1
+Estado: visible
+Filas de datos aproximadas: 883
+Columnas declaradas: 7
+Columnas hasta el ultimo encabezado: 7
+Encabezados:
+  001. ExRt
+  002. From
+  003. To
+  004. Valid from
+  005. Exch. Rate
+  006. Ratio (from)
+  007. Ratio (to)
+Encabezados repetidos: Ninguno exacto
+
+======================================================================
+Archivo: FxRates_20260731.xlsx
+Ruta relativa: input/FxRates_20260731.xlsx
+Tamano en bytes: 143187
+Hojas: Hoja1
+
+Hoja: Hoja1
+Estado: visible
+Filas de datos aproximadas: 3783
+Columnas declaradas: 7
+Columnas hasta el ultimo encabezado: 7
+Encabezados:
+  001. ExRt
+  002. From
+  003. To
+  004. Valid from
+  005. Exch. Rate
+  006. Ratio (from)
+  007. Ratio (to)
+Encabezados repetidos: Ninguno exacto
+
+======================================================================
+Archivo: LBR CA_20260228.XLSX
+Ruta relativa: input/LBR CA_20260228.XLSX
+Tamano en bytes: 2370275
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 11207
+Columnas declaradas: 54
+Columnas hasta el ultimo encabezado: 54
+Encabezados:
+  001. CoCd
+  002. DocumentNo
+  003. Year
+  004. Doc. Type
+  005. Doc. Date
+  006. Pstng Date
+  007. Reference
+  008. Ref. Tran.
+  009. Ref. Key
+  010. Vendor
+  011. Clearing
+  012. Clrng doc.
+  013. Year
+  014. DocumentNo
+  015. Pstng Date
+  016. Doc. Date
+  017. Crcy
+  018. Reference
+  019. D/C
+  020. Amount in LC
+  021. Crcy
+  022. Amount
+  023. Crcy
+  024. G/L Acct
+  025. G/L
+  026. PayT
+  027. Inv. ref.
+  028. User name
+  029. Document Header Text
+  030. Entry Dte
+  031. Time
+  032. TCode
+  033. Crcy
+  034. PK
+  035. Itm
+  036. SG
+  037. Bline Date
+  038. Day1
+  039. Day2
+  040. Net
+  041. PM
+  042. PBk
+  043. Company Name
+  044. Crcy
+  045. Vendor
+  046. Name 1
+  047. Cty
+  048. Tax Number 1
+  049. Tax Number 2
+  050. RefGr.
+  051. Rev. with
+  052. Year
+  053. Reason
+  054. Reversal
+Encabezados repetidos: DocumentNo (2); Year (3); Doc. Date (2); Pstng Date (2); Reference (2); Vendor (2); Crcy (5)
+
+======================================================================
+Archivo: LBR Customer_20260228.XLSX
+Ruta relativa: input/LBR Customer_20260228.XLSX
+Tamano en bytes: 3107503
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 31374
+Columnas declaradas: 19
+Columnas hasta el ultimo encabezado: 19
+Encabezados:
+  001. CoCd
+  002. Cty
+  003. Customer
+  004. Name 1
+  005. City
+  006. Street
+  007. Rg
+  008. PostalCode
+  009. Address
+  010. Date
+  011. Created by
+  012. B
+  013. DelF
+  014. DelF
+  015. B
+  016. Pmt meths
+  017. PayT
+  018. Recon.acct
+  019. Group
+Encabezados repetidos: B (2); DelF (2)
+
+======================================================================
+Archivo: LBR FAM_ANLB_20260731.XLSX
+Ruta relativa: input/LBR FAM_ANLB_20260731.XLSX
+Tamano en bytes: 3599942
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 124785
+Columnas declaradas: 8
+Columnas hasta el ultimo encabezado: 8
+Encabezados:
+  001. CoCd
+  002. Use
+  003. Per
+  004. DepKy
+  005. ODep.Start
+  006. Ar.
+  007. Asset
+  008. SNo.
+Encabezados repetidos: Ninguno exacto
+
+======================================================================
+Archivo: LBR FAM_AR_20260731.XLSX
+Ruta relativa: input/LBR FAM_AR_20260731.XLSX
+Tamano en bytes: 577796
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 10343
+Columnas declaradas: 14
+Columnas hasta el ultimo encabezado: 14
+Encabezados:
+  001. Asset
+  002. Subnumber
+  003. Company Code
+  004. Asset description
+  005. Capitalized on
+  006. Acquis.val.
+  007. Accum.dep.
+  008. Book val.
+  009. Business Area
+  010. Asset Class
+  011. Balance sheet item
+  012. Bal.sh.acct APC
+  013. Ord.dep.start date
+  014. Currency
+Encabezados repetidos: Ninguno exacto
+
+======================================================================
+Archivo: LBR FAM_BAL_20260731.XLSX
+Ruta relativa: input/LBR FAM_BAL_20260731.XLSX
+Tamano en bytes: 1179178
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 20826
+Columnas declaradas: 17
+Columnas hasta el ultimo encabezado: 17
+Encabezados:
+  001. CoCd
+  002. Asset
+  003. SNo.
+  004. Class
+  005. Asset description
+  006. Ar.
+  007. Year
+  008. Cum.acquis.val.
+  009. Crcy
+  010. Accm.ord.deprec
+  011. Crcy
+  012. Cum.Spec.dep.
+  013. Crcy
+  014. Cum.unplnd.dep.
+  015. Crcy
+  016. Cum.reserves
+  017. Crcy
+Encabezados repetidos: Crcy (5)
+
+======================================================================
+Archivo: LBR FAM_MOV_20260731.XLSX
+Ruta relativa: input/LBR FAM_MOV_20260731.XLSX
+Tamano en bytes: 129967
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 2080
+Columnas declaradas: 17
+Columnas hasta el ultimo encabezado: 17
+Encabezados:
+  001. CoCd
+  002. Asset
+  003. SNo.
+  004. Class
+  005. Asset description
+  006. Ar.
+  007. Year
+  008. DocumentNo
+  009. Itm
+  010. Transaction Type
+  011. AsstVal date
+  012. Amount posted
+  013. Crcy
+  014. Ord.dep.on trans
+  015. Crcy
+  016. S.dep.on trans.
+  017. Crcy
+Encabezados repetidos: Crcy (3)
+
+======================================================================
+Archivo: LBR GL_MD_20260228.XLSX
+Ruta relativa: input/LBR GL_MD_20260228.XLSX
+Tamano en bytes: 796653
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 12628
+Columnas declaradas: 15
+Columnas hasta el ultimo encabezado: 15
+Encabezados:
+  001. CoCd
+  002. Company Name
+  003. ChAc
+  004. Crcy
+  005. ChAc
+  006. G/L Acct
+  007. Date
+  008. Created by
+  009. B/S acct
+  010. Group acct
+  011. ChAc
+  012. G/L Acct
+  013. Language
+  014. Short Text
+  015. Long Text
+Encabezados repetidos: ChAc (3); G/L Acct (2)
+
+======================================================================
+Archivo: LBR SD_AP_CLEARED_20260731.XLSX
+Ruta relativa: input/LBR SD_AP_CLEARED_20260731.XLSX
+Tamano en bytes: 7159608
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 49762
+Columnas declaradas: 35
+Columnas hasta el ultimo encabezado: 35
+Encabezados:
+  001. CoCd
+  002. DocumentNo
+  003. Year
+  004. Doc. Type
+  005. Doc. Date
+  006. Pstng Date
+  007. Reference
+  008. Ref. Tran.
+  009. Ref. Key
+  010. Vendor
+  011. Clearing
+  012. Clrng doc.
+  013. Year
+  014. DocumentNo
+  015. Pstng Date
+  016. Doc. Date
+  017. Crcy
+  018. Reference
+  019. D/C
+  020. Amount in LC
+  021. Crcy
+  022. Amount
+  023. Crcy
+  024. G/L Acct
+  025. G/L
+  026. PayT
+  027. Inv. ref.
+  028. User name
+  029. Profit Ctr
+  030. Entry Dte
+  031. TCode
+  032. Itm
+  033. PK
+  034. Rev. with
+  035. Year
+Encabezados repetidos: DocumentNo (2); Year (3); Doc. Date (2); Pstng Date (2); Reference (2); Crcy (3)
+
+======================================================================
+Archivo: LBR SD_AP_OPEN_20260731.XLSX
+Ruta relativa: input/LBR SD_AP_OPEN_20260731.XLSX
+Tamano en bytes: 27931
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 216
+Columnas declaradas: 23
+Columnas hasta el ultimo encabezado: 23
+Encabezados:
+  001. CoCd
+  002. Vendor
+  003. DocumentNo
+  004. Year
+  005. Itm
+  006. PK
+  007. D/C
+  008. Amount
+  009. Crcy
+  010. Amount in LC
+  011. Crcy
+  012. Text
+  013. Doc. Type
+  014. Doc. Date
+  015. Pstng Date
+  016. Entry Dte
+  017. Time
+  018. User name
+  019. TCode
+  020. Crcy
+  021. Reference
+  022. Rev. with
+  023. Year
+Encabezados repetidos: Year (2); Crcy (3)
+
+======================================================================
+Archivo: LBR SD_JOURNAL_20260731.XLSX
+Ruta relativa: input/LBR SD_JOURNAL_20260731.XLSX
+Tamano en bytes: 26744737
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 486547
+Columnas declaradas: 15
+Columnas hasta el ultimo encabezado: 15
+Encabezados:
+  001. CoCd
+  002. DocumentNo
+  003. Year
+  004. Itm
+  005. AccTy
+  006. PK
+  007. G/L
+  008. Vendor
+  009. Customer
+  010. D/C
+  011. Amount
+  012. Crcy
+  013. Amount in LC
+  014. Crcy
+  015. Text
+Encabezados repetidos: Crcy (2)
+
+======================================================================
+Archivo: LBR SD_VENDOR_20260731.XLSX
+Ruta relativa: input/LBR SD_VENDOR_20260731.XLSX
+Tamano en bytes: 2554592
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 31423
+Columnas declaradas: 21
+Columnas hasta el ultimo encabezado: 21
+Encabezados:
+  001. Vendor
+  002. Cty
+  003. Name 1
+  004. City
+  005. Date
+  006. Created by
+  007. Central Del LOEVM
+  008. Central Posting Block SPERR
+  009. Central Purchasing Block SPERM
+  010. Central Payment Block SPERZ
+  011. CoCd
+  012. District
+  013. Date
+  014. Created by
+  015. CC Posting Block SPERR
+  016. CC Deletion Flag LOE
+  017. Pmt meths
+  018. PayT
+  019. Block key for Payment ZAHLS
+  020. Group
+  021. E-Mail Address
+Encabezados repetidos: Date (2); Created by (2)
+
+======================================================================
+Archivo: LBR VM_BANK_CDHDR_20260731.XLSX
+Ruta relativa: input/LBR VM_BANK_CDHDR_20260731.XLSX
+Tamano en bytes: 115673
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 2021
+Columnas declaradas: 13
+Columnas hasta el ultimo encabezado: 13
+Encabezados:
+  001. Change doc. object
+  002. Object value
+  003. Document number
+  004. User
+  005. Date
+  006. Time
+  007. Transaction Code
+  008. Change number
+  009. Document number
+  010. gen from plan. changes
+  011. Application object change flag
+  012. Language Key
+  013. 3-Byte field
+Encabezados repetidos: Document number (2)
+
+======================================================================
+Archivo: LBR VM_BANK_CDPOS_20260731.XLSX
+Ruta relativa: input/LBR VM_BANK_CDPOS_20260731.XLSX
+Tamano en bytes: 71260
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 1363
+Columnas declaradas: 14
+Columnas hasta el ultimo encabezado: 14
+Encabezados:
+  001. Change doc. object
+  002. Object value
+  003. Document number
+  004. Table Name
+  005. Table Key
+  006. Field Name
+  007. Change ID
+  008. Text flag
+  009. Unit
+  010. Unit
+  011. CUKY
+  012. CUKY
+  013. New value
+  014. Old value
+Encabezados repetidos: Unit (2); CUKY (2)
+
+======================================================================
+Archivo: LBR VM_BKPF_PS_20260731.XLSX
+Ruta relativa: input/LBR VM_BKPF_PS_20260731.XLSX
+Tamano en bytes: 7268994
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 192945
+Columnas declaradas: 10
+Columnas hasta el ultimo encabezado: 10
+Encabezados:
+  001. CoCd
+  002. DocumentNo
+  003. Year
+  004. Pstng Date
+  005. User name
+  006. Doc. Type
+  007. TCode
+  008. Rev. with
+  009. Year
+  010. Reason
+Encabezados repetidos: Year (2)
+
+======================================================================
+Archivo: LBR VM_EMP_20260731.XLSX
+Ruta relativa: input/LBR VM_EMP_20260731.XLSX
+Tamano en bytes: 808704
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 12470
+Columnas declaradas: 15
+Columnas hasta el ultimo encabezado: 15
+Encabezados:
+  001. CoCd
+  002. PersNo
+  003. Name of employee or applicant
+  004. Start Date
+  005. End Date
+  006. S
+  007. Start Date
+  008. End Date
+  009. PA
+  010. PSubarea
+  011. EEGrp
+  012. ESgrp
+  013. Org.unit
+  014. Position
+  015. Cost Ctr
+Encabezados repetidos: Start Date (2); End Date (2)
+
+======================================================================
+Archivo: LBR VM_VENDORS_20260731.xlsx
+Ruta relativa: input/LBR VM_VENDORS_20260731.xlsx
+Tamano en bytes: 7207500
+Hojas: Hoja1
+
+Hoja: Hoja1
+Estado: visible
+Filas de datos aproximadas: 30782
+Columnas declaradas: 47
+Columnas hasta el ultimo encabezado: 47
+Encabezados:
+  001. Vendor
+  002. Cty
+  003. Name 1
+  004. City
+  005. PostalCode
+  006. Rg
+  007. Street
+  008. Date
+  009. Created by
+  010. LOEVM
+  011. SPERR
+  012. SPERM
+  013. Telephone 1
+  014. Tax Number 1
+  015. Tax Number 2
+  016. VAT Registration No.
+  017. Tax Jur.
+  018. Tax Number 3
+  019. Tax Number 4
+  020. Tax Number 5
+  021. Tax type
+  022. Tax no.ty.
+  023. One-time
+  024. Tr.Prt
+  025. SPERZ
+  026. Conf.date
+  027. LFBKVendor
+  028. Bank Key
+  029. Bank Account
+  030. Ctry
+  031. Acct holder
+  032. Valid from
+  033. Eff.to
+  034. Company Name
+  035. CoCd
+  036. CoCd
+  037. LFB1Vendor
+  038. Date
+  039. Created by
+  040. LFB1_LOEVM
+  041. ZAHLS
+  042. ZTER
+  043. ZWELS
+  044. Group
+  045. B
+  046. District
+  047. E-Mail Address
+Encabezados repetidos: Date (2); Created by (2); CoCd (2)
+
+======================================================================
+Archivo: LBR VM_VPBSAK_20260731.XLSX
+Ruta relativa: input/LBR VM_VPBSAK_20260731.XLSX
+Tamano en bytes: 2896340
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 49192
+Columnas declaradas: 15
+Columnas hasta el ultimo encabezado: 15
+Encabezados:
+  001. CoCd
+  002. Vendor
+  003. Year
+  004. DocumentNo
+  005. Itm
+  006. Pstng Date
+  007. Doc. Type
+  008. D/C
+  009. Crcy
+  010. Amount
+  011. Crcy
+  012. Amount in LC
+  013. Crcy
+  014. Clearing
+  015. Clrng doc.
+Encabezados repetidos: Crcy (3)
+
+======================================================================
+Archivo: LBR VM_VPBSIK_20260731.XLSX
+Ruta relativa: input/LBR VM_VPBSIK_20260731.XLSX
+Tamano en bytes: 80410
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 952
+Columnas declaradas: 15
+Columnas hasta el ultimo encabezado: 15
+Encabezados:
+  001. CoCd
+  002. Vendor
+  003. Year
+  004. DocumentNo
+  005. Itm
+  006. Pstng Date
+  007. Doc. Type
+  008. D/C
+  009. Crcy
+  010. Amount
+  011. Crcy
+  012. Amount in LC
+  013. Crcy
+  014. Clearing
+  015. Clrng doc.
+Encabezados repetidos: Crcy (3)
+
+======================================================================
+Archivo: LBR VM_VPOS_20260731.XLSX
+Ruta relativa: input/LBR VM_VPOS_20260731.XLSX
+Tamano en bytes: 10988
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 61
+Columnas declaradas: 30
+Columnas hasta el ultimo encabezado: 30
+Encabezados:
+  001. CoCd
+  002. Vendor
+  003. Year
+  004. DocumentNo
+  005. Itm
+  006. Pstng Date
+  007. Doc. Date
+  008. D/C
+  009. Crcy
+  010. Amount
+  011. Crcy
+  012. Amount in LC
+  013. Crcy
+  014. CoCd
+  015. Vendor
+  016. Year
+  017. DocumentNo
+  018. Itm
+  019. Pstng Date
+  020. Doc. Type
+  021. D/C
+  022. Crcy
+  023. Amount
+  024. Crcy
+  025. Amount in LC
+  026. Crcy
+  027. Clearing
+  028. Clrng doc.
+  029. Clearing
+  030. Clrng doc.
+Encabezados repetidos: CoCd (2); Vendor (2); Year (2); DocumentNo (2); Itm (2); Pstng Date (2); D/C (2); Crcy (6); Amount (2); Amount in LC (2); Clearing (2); Clrng doc. (2)
+
+======================================================================
+Archivo: LBR ZTFI098_30_20260228.xlsx
+Ruta relativa: input/LBR ZTFI098_30_20260228.xlsx
+Tamano en bytes: 528314
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 2733
+Columnas declaradas: 36
+Columnas hasta el ultimo encabezado: 36
+Encabezados:
+  001. Empresa
+  002. Nº doc.
+  003. Ano
+  004. Texto do Cabeçalho
+  005. Conta Razão
+  006. Cliente
+  007. Nome Cli/For
+  008. Data doc.
+  009. Dt.base prazo pgto
+  010. Data de Planejamento
+  011. Referência
+  012. Moeda transação
+  013. Val. da Transação
+  014. Bloqueio Pagamento
+  015. Moeda BRL
+  016. Moeda Grp. Emp.
+  017. Moeda USD
+  018. Val outra moeda
+  019. Cod. Moeda
+  020. Val moeda Interna
+  021. Cen.lucro
+  022. PEP
+  023. User. Respons.
+  024. Razão Especial
+  025. Grp. Emp.
+  026. Material
+  027. Desc. Material
+  028. Fabricante
+  029. Num Atribuição
+  030. Nº linha Doc.Contábil
+  031. IR
+  032. INSS
+  033. PIS
+  034. COFINS
+  035. CSLL
+  036. ISS
+Encabezados repetidos: Ninguno exacto
+
+======================================================================
+Archivo: LBR ZTFI098_34_20260228.xlsx
+Ruta relativa: input/LBR ZTFI098_34_20260228.xlsx
+Tamano en bytes: 290576
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 1545
+Columnas declaradas: 39
+Columnas hasta el ultimo encabezado: 36
+Encabezados:
+  001. Empresa
+  002. Nº doc.
+  003. Ano
+  004. Texto do Cabeçalho
+  005. Conta Razão
+  006. Cliente
+  007. Nome Cli/For
+  008. Data doc.
+  009. Dt.base prazo pgto
+  010. Data de Planejamento
+  011. Referência
+  012. Moeda transação
+  013. Val. da Transação
+  014. Bloqueio Pagamento
+  015. Moeda BRL
+  016. Moeda Grp. Emp.
+  017. Moeda USD
+  018. Val outra moeda
+  019. Cod. Moeda
+  020. Val moeda Interna
+  021. Cen.lucro
+  022. PEP
+  023. User. Respons.
+  024. Razão Especial
+  025. Grp. Emp.
+  026. Material
+  027. Desc. Material
+  028. Fabricante
+  029. Num Atribuição
+  030. Nº linha Doc.Contábil
+  031. IR
+  032. INSS
+  033. PIS
+  034. COFINS
+  035. CSLL
+  036. ISS
+Encabezados repetidos: Ninguno exacto
+
+======================================================================
+Archivo: LBR ZTFI098_52_20260228.xlsx
+Ruta relativa: input/LBR ZTFI098_52_20260228.xlsx
+Tamano en bytes: 32292
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 104
+Columnas declaradas: 36
+Columnas hasta el ultimo encabezado: 36
+Encabezados:
+  001. Empresa
+  002. Nº doc.
+  003. Ano
+  004. Texto do Cabeçalho
+  005. Conta Razão
+  006. Cliente
+  007. Nome Cli/For
+  008. Data doc.
+  009. Dt.base prazo pgto
+  010. Data de Planejamento
+  011. Referência
+  012. Moeda transação
+  013. Val. da Transação
+  014. Bloqueio Pagamento
+  015. Moeda BRL
+  016. Moeda Grp. Emp.
+  017. Moeda USD
+  018. Val outra moeda
+  019. Cod. Moeda
+  020. Val moeda Interna
+  021. Cen.lucro
+  022. PEP
+  023. User. Respons.
+  024. Razão Especial
+  025. Grp. Emp.
+  026. Material
+  027. Desc. Material
+  028. Fabricante
+  029. Num Atribuição
+  030. Nº linha Doc.Contábil
+  031. IR
+  032. INSS
+  033. PIS
+  034. COFINS
+  035. CSLL
+  036. ISS
+Encabezados repetidos: Ninguno exacto
+
+======================================================================
+Archivo: Salesforce Account History_20260228.xlsx
+Ruta relativa: input/Salesforce Account History_20260228.xlsx
+Tamano en bytes: 130805
+Hojas: Account History
+
+Hoja: Account History
+Estado: visible
+Filas de datos aproximadas: 1033
+Columnas declaradas: 19
+Columnas hasta el ultimo encabezado: 0
+Encabezados:
+Encabezados repetidos: Ninguno exacto
+ADVERTENCIA: fila 1 sin encabezados; revisar inicio de datos.
+
+======================================================================
+Archivo: Salesforce Credit_limits_due_120_20260228.xlsx
+Ruta relativa: input/Salesforce Credit_limits_due_120_20260228.xlsx
+Tamano en bytes: 37680
+Hojas: CRÉDITO - Limites à vencer em 1
+
+Hoja: CRÉDITO - Limites à vencer em 1
+Estado: visible
+Filas de datos aproximadas: 250
+Columnas declaradas: 19
+Columnas hasta el ultimo encabezado: 0
+Encabezados:
+Encabezados repetidos: Ninguno exacto
+ADVERTENCIA: fila 1 sin encabezados; revisar inicio de datos.
+
+======================================================================
+Archivo: Salesforce Customer_credit_limits_curr_20260228.xlsx
+Ruta relativa: input/Salesforce Customer_credit_limits_curr_20260228.xlsx
+Tamano en bytes: 553070
+Hojas: IA CRÉDITO - Clientes todos los
+
+Hoja: IA CRÉDITO - Clientes todos los
+Estado: visible
+Filas de datos aproximadas: 5624
+Columnas declaradas: 16
+Columnas hasta el ultimo encabezado: 0
+Encabezados:
+Encabezados repetidos: Ninguno exacto
+ADVERTENCIA: fila 1 sin encabezados; revisar inicio de datos.
+
+======================================================================
+Archivo: Salesforce Customer_credit_limits_prev_20251130.xlsx
+Ruta relativa: input/Salesforce Customer_credit_limits_prev_20251130.xlsx
+Tamano en bytes: 552003
+Hojas: IA CRÉDITO - Clientes todos los
+
+Hoja: IA CRÉDITO - Clientes todos los
+Estado: visible
+Filas de datos aproximadas: 5624
+Columnas declaradas: 16
+Columnas hasta el ultimo encabezado: 0
+Encabezados:
+Encabezados repetidos: Ninguno exacto
+ADVERTENCIA: fila 1 sin encabezados; revisar inicio de datos.
+
+======================================================================
+Archivos con errores de lectura: 0
