@@ -1,0 +1,164 @@
+LBR SD - CATALOGO DE INPUTS
+=================================================================
+Generado: 2026-10-16T16:21:59
+Archivos encontrados: 4
+
+Solo metadatos y encabezados. No se incluyen filas de datos.
+Encabezados leidos de la fila 1, tal como estan guardados.
+Filas aproximadas: dimension declarada menos el encabezado.
+Pueden incluir totales o filas formateadas.
+Las tablas y campos tecnicos SAP no se deducen de los encabezados.
+
+
+=================================================================
+Archivo: LBR SD_AP_CLEARED_20260731.XLSX
+Ruta relativa: input/LBR SD_AP_CLEARED_20260731.XLSX
+Tamano en bytes: 7159608
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 49762
+Columnas declaradas: 35
+Columnas hasta el ultimo encabezado: 35
+Encabezados:
+  001. CoCd
+  002. DocumentNo
+  003. Year
+  004. Doc. Type
+  005. Doc. Date
+  006. Pstng Date
+  007. Reference
+  008. Ref. Tran.
+  009. Ref. Key
+  010. Vendor
+  011. Clearing
+  012. Clrng doc.
+  013. Year
+  014. DocumentNo
+  015. Pstng Date
+  016. Doc. Date
+  017. Crcy
+  018. Reference
+  019. D/C
+  020. Amount in LC
+  021. Crcy
+  022. Amount
+  023. Crcy
+  024. G/L Acct
+  025. G/L
+  026. PayT
+  027. Inv. ref.
+  028. User name
+  029. Profit Ctr
+  030. Entry Dte
+  031. TCode
+  032. Itm
+  033. PK
+  034. Rev. with
+  035. Year
+Encabezados repetidos: DocumentNo (2); Year (3); Doc. Date (2); Pstng Date (2); Reference (2); Crcy (3)
+
+=================================================================
+Archivo: LBR SD_AP_OPEN_20260731.XLSX
+Ruta relativa: input/LBR SD_AP_OPEN_20260731.XLSX
+Tamano en bytes: 27931
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 216
+Columnas declaradas: 23
+Columnas hasta el ultimo encabezado: 23
+Encabezados:
+  001. CoCd
+  002. Vendor
+  003. DocumentNo
+  004. Year
+  005. Itm
+  006. PK
+  007. D/C
+  008. Amount
+  009. Crcy
+  010. Amount in LC
+  011. Crcy
+  012. Text
+  013. Doc. Type
+  014. Doc. Date
+  015. Pstng Date
+  016. Entry Dte
+  017. Time
+  018. User name
+  019. TCode
+  020. Crcy
+  021. Reference
+  022. Rev. with
+  023. Year
+Encabezados repetidos: Year (2); Crcy (3)
+
+=================================================================
+Archivo: LBR SD_JOURNAL_20260731.XLSX
+Ruta relativa: input/LBR SD_JOURNAL_20260731.XLSX
+Tamano en bytes: 26744737
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 486547
+Columnas declaradas: 15
+Columnas hasta el ultimo encabezado: 15
+Encabezados:
+  001. CoCd
+  002. DocumentNo
+  003. Year
+  004. Itm
+  005. AccTy
+  006. PK
+  007. G/L
+  008. Vendor
+  009. Customer
+  010. D/C
+  011. Amount
+  012. Crcy
+  013. Amount in LC
+  014. Crcy
+  015. Text
+Encabezados repetidos: Crcy (2)
+
+=================================================================
+Archivo: LBR SD_VENDOR_20260731.XLSX
+Ruta relativa: input/LBR SD_VENDOR_20260731.XLSX
+Tamano en bytes: 2554592
+Hojas: Sheet1
+
+Hoja: Sheet1
+Estado: visible
+Filas de datos aproximadas: 31423
+Columnas declaradas: 21
+Columnas hasta el ultimo encabezado: 21
+Encabezados:
+  001. Vendor
+  002. Cty
+  003. Name 1
+  004. City
+  005. Date
+  006. Created by
+  007. Central Del LOEVM
+  008. Central Posting Block SPERR
+  009. Central Purchasing Block SPERM
+  010. Central Payment Block SPERZ
+  011. CoCd
+  012. District
+  013. Date
+  014. Created by
+  015. CC Posting Block SPERR
+  016. CC Deletion Flag LOE
+  017. Pmt meths
+  018. PayT
+  019. Block key for Payment ZAHLS
+  020. Group
+  021. E-Mail Address
+Encabezados repetidos: Date (2); Created by (2)
+
+=================================================================
+Archivos con errores de lectura: 0
