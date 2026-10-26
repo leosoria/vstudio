@@ -222,6 +222,13 @@ def get_active_modules(config_df):
     return active_modules
 
 
+def _extract_vm_rules(dataframe, row):
+    """Load VM-specific helpers only for enabled VM controls."""
+    from core.vm_rules import extract_vm_rule_values
+
+    return extract_vm_rule_values(dataframe, row)
+
+
 def get_active_controls(config_path, module_name):
     """
     Return active controls from a module sheet.
@@ -276,6 +283,16 @@ def get_active_controls(config_path, module_name):
                 "param1": row.get(param1_column, "") if param1_column else "",
                 "param2": row.get(param2_column, "") if param2_column else "",
                 "description": row.get(description_column, "") if description_column else "",
+                # VM_RULES_CONFIG_V1
+                **(
+                    {
+                        "vm_rules_raw": _extract_vm_rules(
+                            module_df, row
+                        )
+                    }
+                    if str(module_name).strip().upper() == "VM"
+                    else {}
+                ),
                 "execute": execute,
             }
         )

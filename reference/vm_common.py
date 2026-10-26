@@ -179,7 +179,9 @@ BANK_DETAIL_COLUMNS = (
     "Bank Valid To",
 )
 
+# VM_MATCHING_SOURCE_V1
 VENDOR_COLUMNS = (
+    "Email",
     "Company",
     "Company Name",
     "Vendor Code",
@@ -231,6 +233,16 @@ VENDOR_REQUIRED_COLUMNS = (
 )
 
 VENDOR_COLUMN_ALIASES = {
+    "Email": (
+        "Email",
+        "E-mail",
+        "E-Mail Address",
+        "Email Address",
+        "SMTP_ADDR",
+        "SMTP ADDR",
+        "ADR6-SMTP_ADDR",
+        "ADR6-SMTP ADDR",
+    ),
     "Company": (
         "Company",
         "Company Code",
@@ -1659,6 +1671,7 @@ def read_vm_excel(
     *,
     sheet_name: str = VM_INPUT_SHEET,
     usecols: Sequence[str] | None = None,
+    preserve_empty_columns: bool = False,
 ) -> pd.DataFrame:
     """
     Read one VM Excel export safely as object values.
@@ -1712,13 +1725,10 @@ def read_vm_excel(
             f"from {file_path}: {error}"
         ) from error
 
-    dataframe = dataframe.dropna(
-        axis=0,
-        how="all",
-    ).dropna(
-        axis=1,
-        how="all",
-    )
+    # VM_KEEP_EMPTY_VENDOR_COLUMNS_V1
+    dataframe = dataframe.dropna(axis=0, how="all")
+    if not preserve_empty_columns:
+        dataframe = dataframe.dropna(axis=1, how="all")
 
     dataframe.columns = [
         safe_text(column)
@@ -2124,6 +2134,7 @@ def load_vm_vendors(
     raw = read_vm_excel(
         input_file,
         sheet_name=sheet_name,
+        preserve_empty_columns=True,
     )
 
     _validate_vendor_duplicate_company_columns(
@@ -2197,9 +2208,9 @@ def load_vm_vendors(
         )
     ]
 
-    return result.drop_duplicates(
-        ignore_index=True
-    )
+    result = result.drop_duplicates(ignore_index=True)
+    result.attrs["vm_source_columns"] = tuple(mapping.keys())
+    return result
 
 
 def build_vendor_master_population(
@@ -2218,7 +2229,7 @@ def build_vendor_master_population(
     master_columns = [
         column
         for column in VENDOR_COLUMNS
-        if column not in BANK_DETAIL_COLUMNS
+        if column not in BANK_DETAIL_COLUMNS and column != "Email"
     ]
 
     value_columns = [
@@ -4376,6 +4387,7 @@ def write_vm_control_sheet(
     date_columns: Iterable[Any] | None = None,
     amount_columns: Iterable[Any] | None = None,
     integer_columns: Iterable[Any] | None = None,
+    summary_text: str | None = None,
 ) -> Path:
     """
     Write or replace one VM result sheet while preserving all other VM sheets.
@@ -4483,6 +4495,45 @@ def write_vm_control_sheet(
         amount_columns=amount_columns,
         integer_columns=integer_columns,
     )
+
+    # VM_EMPTY_SUMMARY_WRITER_V2
+    if dataframe.empty and summary_text:
+        from openpyxl.styles import Alignment
+
+        # Informational area below the original headers.
+        last_summary_column = min(6, len(dataframe.columns))
+        worksheet.merge_cells(
+            start_row=4,
+            start_column=1,
+            end_row=8,
+            end_column=last_summary_column,
+        )
+
+        summary_cell = worksheet.cell(
+            row=4,
+            column=1,
+            value=(
+                "INFORMACION DEL CONTROL\n"
+                + str(summary_text)
+            )[:32767],
+        )
+        summary_cell.font = Font(
+            name="Calibri",
+            size=11,
+            color="334155",
+        )
+        summary_cell.fill = PatternFill(
+            fill_type="solid",
+            fgColor="F1F5F9",
+        )
+        summary_cell.alignment = Alignment(
+            wrap_text=True,
+            vertical="top",
+            horizontal="left",
+        )
+
+        for row_number in range(4, 9):
+            worksheet.row_dimensions[row_number].height = 24
 
     _save_vm_workbook_atomic(
         workbook=workbook,
