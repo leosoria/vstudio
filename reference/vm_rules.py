@@ -14,7 +14,9 @@ import unicodedata
 import pandas as pd
 
 
+# VM_REVIEW_GROUPS_ADDRESS_V1
 RULE_HEADERS = (
+    "Exclude Same Address",
     "Same Company Code",
     "Different Vendor Code",
     "Same Address",
@@ -72,7 +74,7 @@ def extract_vm_rule_values(dataframe, row):
 
 
 def parse_vm_rules(context):
-    """Validate the nine T/F settings for a configurable matching control.
+    """Validate the T/F settings for a configurable matching control.
 
     Blank values and unknown settings raise an error.
     F means that the condition is not required.
@@ -105,6 +107,9 @@ def parse_vm_rules(context):
                 f"received {raw[header]!r}."
             )
         rules[header] = value == "T"
+
+    if rules["Same Address"] and rules["Exclude Same Address"]:
+        raise ValueError(f"{control_id}: Same Address and Exclude Same Address cannot both be T.")
 
     if not any(rules[header] for header in MATCH_HEADERS):
         raise ValueError(
@@ -195,6 +200,10 @@ def filter_candidate_pairs(pairs, rules, columns):
     keep = pd.Series(True, index=pairs.index)
 
     for header in condition_headers:
+        if header == "Exclude Same Address" and header not in columns:
+            columns = dict(columns)
+            if "Same Address" in columns:
+                columns[header] = columns["Same Address"]
         if header not in columns:
             raise ValueError(
                 f"VM: enabled condition {header!r} is not supported "
@@ -229,7 +238,10 @@ def filter_candidate_pairs(pairs, rules, columns):
             "Different Vendor Name",
         }
         comparison = left.ne(right) if different else left.eq(right)
-        keep &= populated & comparison
+        if header == "Exclude Same Address":
+            keep &= ~(populated & left.eq(right))
+        else:
+            keep &= populated & comparison
 
     return pairs.loc[keep].copy().reset_index(drop=True)
 
@@ -304,6 +316,9 @@ def find_vendor_pairs(
                 f"VM: invalid column mapping for {header}."
             )
         required.update(specs[header])
+
+    if rules["Exclude Same Address"]:
+        required.update(specs["Same Address"])
 
     missing = sorted(required.difference(population.columns))
     if missing:
@@ -437,6 +452,7 @@ def find_vendor_pairs(
             excluded_account = [
                 any(
                     part in VM_BANK_ACCOUNT_EXCLUSIONS
+                    or (bool(part) and set(part) == {"0"})
                     for part in key
                 )
                 for key in keys
@@ -548,6 +564,21 @@ def find_vendor_pairs(
             & pairs["_Name Right"].ne("")
             & pairs["_Name Left"].ne(pairs["_Name Right"])
         ]
+
+    if rules["Exclude Same Address"]:
+        fields = list(specs["Same Address"])
+        addresses = {}
+        for values in data[["_Entity"] + fields].itertuples(index=False, name=None):
+            key = tuple(normal(value, "Same Address") for value in values[1:])
+            # Country/city alone is not an actual street address.
+            if key and key[0]:
+                addresses.setdefault(values[0], set()).add(key)
+        shared = [
+            bool(addresses.get(left, set()) & addresses.get(right, set()))
+            for left, right in pairs[pair_ids].itertuples(index=False, name=None)
+        ]
+        metrics["pairs_excluded_same_address"] = sum(shared)
+        pairs = pairs.loc[[not value for value in shared]].copy()
 
     for header in ordered:
         mapping = maps[header]

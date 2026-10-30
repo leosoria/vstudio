@@ -58,6 +58,10 @@ def load_matching_population(context, rules):
         "Same Email": {"Email"},
     }
 
+    fields["Exclude Same Address"] = {"Street", "City", "ZipCode", "Country"}
+    if context.get("control", {}).get("id_control") == "VM_018":
+        required.update(fields["Same Address"])
+
     for header, names in fields.items():
         if rules[header]:
             required.update(names)
@@ -151,6 +155,82 @@ def load_matching_population(context, rules):
     return population
 
 
+
+# VM_REVIEW_GROUPS_ADDRESS_V1
+def _prepare_review_report(pairs, population, rules, control_id):
+    """Group evidence, not row numbers; retain distinct vendor pairs."""
+    supported = {"VM_002", "VM_003", "VM_004", "VM_005", "VM_018"}
+    if control_id not in supported:
+        raise ValueError("Unsupported review control: " + control_id)
+
+    result = pairs.copy()
+    if control_id == "VM_018":
+        fields = ["Street", "City", "ZipCode", "Country"]
+        from core.vm_common import normalize_vendor_code
+        addresses = population[IDENTITY + fields].copy()
+        addresses["Company"] = addresses["Company"].map(normalize_company)
+        addresses["Vendor Code"] = addresses["Vendor Code"].map(normalize_vendor_code)
+        addresses = addresses.drop_duplicates()
+        if addresses.duplicated(IDENTITY).any():
+            raise ValueError("VM18: conflicting addresses for a vendor identity.")
+        addresses = addresses.copy()
+        addresses["Address"] = [
+            " | ".join(safe_text(value) for value in values)
+            if any(safe_text(value) for value in values) else ""
+            for values in addresses[fields].itertuples(index=False, name=None)
+        ]
+        addresses = addresses[IDENTITY + ["Address"]]
+        for side in ("Left", "Right"):
+            renamed = addresses.rename(columns={c: c + " " + side for c in addresses})
+            result = result.merge(
+                renamed,
+                on=["Company " + side, "Vendor Code " + side],
+                how="left", validate="many_to_one",
+            )
+            result["Address " + side] = result["Address " + side].fillna("")
+
+    # VM05 grouping was not part of the requested presentation changes.
+    if control_id == "VM_005":
+        result.insert(0, "Group", range(1, len(result) + 1))
+        return result
+
+    preferred = {
+        "VM_002": "Matching Address",
+        "VM_003": "Matching Phone Number",
+        "VM_004": "Matching Bank Account Number",
+        "VM_018": "Matching Email",
+    }[control_id]
+    evidence = [c for c in result if c.startswith("Matching ")]
+    if not evidence:
+        raise ValueError("VM: missing matching-evidence column.")
+    primary = preferred if preferred in evidence else evidence[0]
+
+    # A pair sharing two values belongs to two evidence groups.
+    # Never merge distinct emails/accounts into one connected group.
+    result[primary] = result[primary].map(
+        lambda value: sorted({
+            part.strip()
+            for part in safe_text(value).split(";")
+            if part.strip()
+        })
+    )
+    if not result.empty and result[primary].map(len).eq(0).any():
+        raise ValueError("VM: empty grouping evidence.")
+    result = result.explode(primary, ignore_index=True)
+    scope = ["Company Left", "Company Right", primary]
+    result = result.sort_values(
+        scope + ["Vendor Code Left", "Vendor Code Right"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    keys = list(result[scope].itertuples(index=False, name=None))
+    groups = {
+        key: number
+        for number, key in enumerate(sorted(set(keys)), start=1)
+    }
+    result.insert(0, "Group", [groups[key] for key in keys])
+    return result
+
+
 def run_configured_vm(context, sheet_name):
     control_id = context["control"]["id_control"]
     rules = parse_vm_rules(context)
@@ -205,7 +285,7 @@ def run_configured_vm(context, sheet_name):
             validate="many_to_one",
         )
 
-    pairs.insert(0, "Group", range(1, len(pairs) + 1))
+    pairs = _prepare_review_report(pairs, population, rules, control_id)
     pairs = pairs.rename(
         columns={
             "Company Left": "CoCo Left",
@@ -228,7 +308,10 @@ def run_configured_vm(context, sheet_name):
         ],
     )
 
-    print(f"{control_id} matching vendor pairs: {len(pairs)}")
+    pair_count = pairs[["CoCo Left", "Vendor Code Left", "CoCo Right", "Vendor Code Right"]].drop_duplicates().shape[0]
+    print(f"{control_id} matching vendor pairs: {pair_count}")
+    print(f"{control_id} evidence rows: {len(pairs)}; groups: {pairs['Group'].nunique()}")
+    print(f"{control_id} pairs excluded by same address: {metrics.get('pairs_excluded_same_address', 0)}")
 
     for warning in posting_metadata.get("warnings", []):
         print(f"WARNING: {warning}")
