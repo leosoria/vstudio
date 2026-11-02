@@ -2,7 +2,7 @@
 VM_008 - Vendors whose name matches a Logicalis employee name.
 
 Logicalis employees are records in the VM vendor master whose Vendor Code
-starts with F and whose Account Group is ZFUN. Employee records with central
+starts with F, independently of Account Group. Employee records with central
 or company deletion flags are excluded.
 
 The supplier population is obtained through the common VM valid-population
@@ -16,6 +16,9 @@ from time import perf_counter
 from typing import Any
 
 import pandas as pd
+
+# VM_EMPLOYEE_ACTIVE_V1
+from core.vm_common import filter_active_records
 
 from core.vm_common import (
     build_vendor_master_population,
@@ -370,7 +373,7 @@ def _build_employee_population(
     """
     Build active Logicalis employees from the VM vendor master.
 
-    Employee records with central or company deletion flags are excluded.
+    Employee records with deletion flags or central posting, purchasing or payment blocks are excluded.
     """
     employee_mask = _logicalis_employee_mask(
         vendor_master
@@ -401,8 +404,26 @@ def _build_employee_population(
         | company_deleted
     )
 
-    employees = candidates.loc[
-        ~deleted,
+    active_candidates, active_metrics = (
+        filter_active_records(candidates)
+    )
+
+    print(
+        f"{CONTROL_ID} F-code records excluded by ACTIVE rule: "
+        f"{active_metrics['excluded_rows']}"
+    )
+    print(
+        f"{CONTROL_ID} F-code records excluded by blocking "
+        f"after deletion checks: "
+        f"{active_metrics['excluded_rows'] - int(deleted.sum())}"
+    )
+    print(
+        f"{CONTROL_ID} F-code records remaining active: "
+        f"{len(active_candidates)}"
+    )
+
+    employees = active_candidates.loc[
+        :,
         [
             "Company",
             "Vendor Code",
@@ -721,6 +742,25 @@ def run_vm_008(
         context
     )
 
+    required_status = {
+        "Central Deletion Flag",
+        "Company Deletion Flag",
+        "Central Posting Block",
+        "Purchasing Block",
+        "Central Payment Block",
+    }
+    available_status = set(
+        vendor_source.attrs.get("vm_source_columns", ())
+    )
+    missing_status = sorted(
+        required_status.difference(available_status)
+    )
+    if missing_status:
+        raise ValueError(
+            f"{CONTROL_ID}: missing source status fields: {missing_status}"
+        )
+
+
     vendor_master_all_companies = (
         build_vendor_master_population(
             vendor_source
@@ -813,18 +853,7 @@ def run_vm_008(
         f"{int(excluded_status.sum())}"
     )
 
-    if employee_population.empty:
-        raise ValueError(
-            f"{CONTROL_ID}: no active Logicalis employees were found "
-            f"using Vendor Code prefix {EMPLOYEE_CODE_PREFIX!r} after "
-            "applying configured-company and deletion-flag rules."
-        )
 
-    if vendor_population.empty:
-        raise ValueError(
-            f"{CONTROL_ID}: valid supplier population is empty after "
-            "the configured company and common VM exclusion rules."
-        )
 
     stage_started = _print_timing(
         "input load and population validation",
@@ -841,10 +870,36 @@ def run_vm_008(
         stage_started,
     )
 
+    # VM08_EMPTY_SUMMARY_V1
+    summary_text = None
+    if output.empty:
+        fmt = lambda value: format(int(value), ",").replace(",", ".")
+
+        comparable_vendors = vendor_population.loc[
+            vendor_population["Vendor Name"].map(_normalize_name).ne(""),
+            ["Company", "Vendor Code"],
+        ].drop_duplicates()
+
+        comparable_employees = employee_population.loc[
+            employee_population["Employee Name"].map(_normalize_name).ne(""),
+            ["Company", "Employee Code"],
+        ].drop_duplicates()
+
+        summary_text = (
+            f"Se compararon los nombres de "
+            f"{fmt(len(comparable_vendors))} proveedores activos con "
+            f"los de {fmt(len(comparable_employees))} registros de "
+            f"empleado activos dentro de la misma sociedad. "
+            f"La comparacion ignora mayusculas/minusculas, acentos "
+            f"y signos de puntuacion. "
+            f"No se identificaron coincidencias."
+        )
+
     output_file = write_vm_control_sheet(
         context=context,
         sheet_name=SHEET_NAME,
         dataframe=output,
+        summary_text=summary_text,
     )
 
     _print_timing(

@@ -11,7 +11,7 @@ The comparison key is:
     Company + Bank Country + Bank Code + Bank Account
 
 Logicalis employees are VM vendor-master records whose Vendor Code starts
-with F. Employee records with central or company deletion flags are excluded.
+with F. Employee records with deletion flags or central posting, purchasing or payment blocks are excluded.
 
 All complete matches are preserved. Concentration and bank-account quality
 columns distinguish individual matches, shared keys, massive keys and
@@ -23,6 +23,9 @@ from time import perf_counter
 from typing import Any
 
 import pandas as pd
+
+# VM_EMPLOYEE_ACTIVE_V1
+from core.vm_common import filter_active_records, VM_BANK_ACCOUNT_EXCLUSIONS
 
 from core.vm_common import (
     build_vendor_bank_population,
@@ -297,8 +300,26 @@ def _build_employee_identity(
         | company_deleted
     )
 
-    employees = candidates.loc[
-        ~deleted,
+    active_candidates, active_metrics = (
+        filter_active_records(candidates)
+    )
+
+    print(
+        f"{CONTROL_ID} F-code records excluded by ACTIVE rule: "
+        f"{active_metrics['excluded_rows']}"
+    )
+    print(
+        f"{CONTROL_ID} F-code records excluded by blocking "
+        f"after deletion checks: "
+        f"{active_metrics['excluded_rows'] - int(deleted.sum())}"
+    )
+    print(
+        f"{CONTROL_ID} F-code records remaining active: "
+        f"{len(active_candidates)}"
+    )
+
+    employees = active_candidates.loc[
+        :,
         [
             "Company",
             "Vendor Code",
@@ -636,7 +657,7 @@ def _prepare_banks(
     )
 
     excluded_account = result["_Normalized Bank Account"].isin(
-        {"BOLETO", "INTERNACIONAL"}
+        VM_BANK_ACCOUNT_EXCLUSIONS
     )
 
     complete_bank = (
@@ -678,7 +699,7 @@ def _prepare_banks(
     )
 
     metrics = {
-        "excluded_boleto_internacional": int(excluded_account.sum()),
+        "excluded_generic_bank_accounts": int(excluded_account.sum()),
         "input_rows": len(
             result
         ),
@@ -1202,6 +1223,25 @@ def run_vm_011(
         context
     )
 
+    required_status = {
+        "Central Deletion Flag",
+        "Company Deletion Flag",
+        "Central Posting Block",
+        "Purchasing Block",
+        "Central Payment Block",
+    }
+    available_status = set(
+        vendor_source.attrs.get("vm_source_columns", ())
+    )
+    missing_status = sorted(
+        required_status.difference(available_status)
+    )
+    if missing_status:
+        raise ValueError(
+            f"{CONTROL_ID}: missing source status fields: {missing_status}"
+        )
+
+
     vendor_master_all = build_vendor_master_population(
         vendor_source
     )
@@ -1320,12 +1360,12 @@ def run_vm_011(
     )
 
     print(
-        f"{CONTROL_ID} supplier bank rows excluded as boleto/internacional: "
-        f"{supplier_bank_metrics.get('excluded_boleto_internacional', 0)}"
+        f"{CONTROL_ID} supplier bank rows excluded as generic bank values: "
+        f"{supplier_bank_metrics.get('excluded_generic_bank_accounts', 0)}"
     )
     print(
-        f"{CONTROL_ID} employee bank rows excluded as boleto/internacional: "
-        f"{employee_bank_metrics.get('excluded_boleto_internacional', 0)}"
+        f"{CONTROL_ID} employee bank rows excluded as generic bank values: "
+        f"{employee_bank_metrics.get('excluded_generic_bank_accounts', 0)}"
     )
 
     stage_started = _print_timing(
@@ -1343,10 +1383,32 @@ def run_vm_011(
         stage_started,
     )
 
+    # VM11_EMPTY_SUMMARY_V1
+    summary_text = None
+    if output.empty:
+        fmt = lambda value: format(int(value), ",").replace(",", ".")
+
+        compared_suppliers = supplier_bank_metrics["distinct_entities"]
+        compared_employees = employee_bank_metrics["distinct_entities"]
+
+        summary_text = (
+            f"De una poblacion de {fmt(len(vendor_population))} "
+            f"proveedores activos y {fmt(len(employee_identity))} "
+            f"registros de empleado activos, se compararon "
+            f"{fmt(compared_suppliers)} proveedores y "
+            f"{fmt(compared_employees)} registros de empleado "
+            f"con combinaciones bancarias completas y no excluidas. "
+            f"Se exigio coincidencia de sociedad, pais, banco y cuenta. "
+            f"Se excluyeron las cuentas genericas "
+            f"BOLETO, INTERNACIONAL, CARTAO e IMPOSTO. "
+            f"No se identificaron coincidencias."
+        )
+
     output_file = write_vm_control_sheet(
         context=context,
         sheet_name=SHEET_NAME,
         dataframe=output,
+        summary_text=summary_text,
         date_columns=[
             "Vendor Bank Valid From",
             "Vendor Bank Valid To",

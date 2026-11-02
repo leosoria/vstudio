@@ -1,127 +1,20 @@
 """
-Common AR utilities.
+Shared utilities for AR01-AR06.
 
-This module contains reusable functions for AR controls.
+Responsibilities:
+- Discover and read period-based AR inputs.
+- Normalize LBR Customer headers in Portuguese or English.
+- Detect Salesforce headers and load common reports.
+- Normalize SAP TCURR/SQVI FX exports and resolve rates to USD.
+- Apply company filters, intercompany mappings, and shared output helpers.
 
-What belongs here:
-- File discovery in the input folder.
-- Period-based file search using the module TO date.
-- Reading Excel/CSV files.
-- Salesforce dynamic header detection.
-- SAP FX Rates reading from SQVI / TCURR export.
-- DataFrame cleanup.
-- Company filtering.
-- Customer/ERP normalization.
-- Common dictionaries used by AR controls.
-- Loading common AR input data.
-
-Current FX logic:
-- FX source file is expected in input/ as:
-    FxRates_YYYYMMDD.xlsx
-
-- Example:
-    FxRates_20260228.xlsx
-
-- The file comes from SAP ECC SQVI based on TCURR.
-
-- Expected SAP columns may be:
-    CgCâ
-    De
-    Para
-    Vál.desde
-    Taxa câmbio
-    Fator (origem)
-    Fator (para)
-
-- AR_001 currently needs BRL -> USD using Spot / Balance Sheet logic:
-    requested_rate_type = "spot_bs"
-    preferred TCot = "EN"
-
-
---------------------
-------Fx Rates------
---------------------
-
-La exportación desde SAP debe realizarse desde SQVI utilizando la tabla TCURR y exportando los siguientes campos:
-- TCot
-- De (Moneda de procedencia)
-- A (Moneda de destino)
-- Válido de
-- Tipo cambio
-- Factor (de)
-- Factor (a)
-
-Querie creada llamada IA_FXRATES
-
-En SQVI, el único criterio obligatorio de selección debe ser el rango de fechas. Siempre que sea posible, los filtros de TCot y monedas deben dejarse en blanco para evitar excluir tipos de cambio válidos.
-
-Lógica de negocio:
- - La tasa final de FX siempre debe representar:
-       Moneda -> USD
-
-El script debe determinar automáticamente el tipo de cambio correcto luego de cargar la exportación de SAP, considerando que:
-- Distintas monedas pueden utilizar diferentes valores de TCot.
-- Algunas monedas están registradas como Moneda → USD.
-- Otras están registradas como USD → Moneda.
-- Por lo tanto, en algunos casos será necesario invertir el tipo de cambio.
-- Los factores deben conservarse para fines de validación, aunque no formen parte del resultado final.
-
-Jerarquía recomendada de TCot:
-- Tasas diarias / operativas: M
-- Spot / Balance Sheet: EN
-- Average / P&L: ZGB
-
-- Jerarquía de búsqueda:
-1. Buscar la fecha solicitada usando el TCot preferido.
-2. Buscar la dirección directa:
-       Moneda -> USD
-3. Si no se encuentra la dirección directa, buscar la dirección inversa:
-       USD -> Moneda
-   y calcular:
-       final_fx_rate = 1 / adjusted_rate
-4. Si no se encuentra la fecha exacta y allow_previous_date=True,
-   buscar la última fecha anterior disponible dentro de max_previous_days.
-5. Si el fallback de TCot está habilitado, buscar valores alternativos de TCot.
-6. Si aún no se encuentra la tasa, devolver Not found o generar error,
-   según cómo lo maneje la función que llama.
-
-
-Lógica de factores SAP:
-- Si Factor (origem) y Factor (para) están en blanco, 0/0 o 1/1:
-    adjusted_rate = tasa SAP original
-- Si los factores son distintos de 1/1 o 0/0:
-    adjusted_rate = raw_rate * factor_to / factor_from
-- Si factor_from es cero y factor_to no es cero:
-    marcar como factor inválido.
-
-Tratamiento de tipos de cambio faltantes:
-- Primer intento: fecha exacta y TCot preferido.
-- Segundo intento: fecha exacta utilizando la dirección inversa de la moneda.
-- Tercer intento (opcional): utilizar la fecha anterior disponible dentro de la tolerancia permitida.
-- Cuarto intento (opcional): utilizar un TCot alternativo aprobado.
-- Si no se encuentra un tipo de cambio válido, el script debe devolver "Not found" y nunca estimar o inventar un valor.
-
-Examples:
-
-Cierre mensual
-TCot: EN
-Moneda de procedencia: USD
-Moneda de destino: BRL
-Fecha: 28.02.2026
-=1/UKURS
-
-
-Históricos
-TCot: M
-Moneda de procedencia: USD
-Moneda de destino: BRL
-Fecha: 01.02.2026 - 28.02.2026
-
---------------------
---------------------
---------------------
-
-    
+Expected period files include LBR Customer_YYYYMMDD and
+FxRates_YYYYMMDD. FX exports may use Portuguese, Spanish, or English
+headers. Rate selection prefers the configured type (EN for spot/BS),
+checks direct and inverse currency directions, optionally searches prior
+dates and approved TCot fallbacks, and never estimates a missing rate.
+SAP factors 0/0 or 1/1 leave the raw rate unchanged; other factors use
+raw_rate * factor_to / factor_from.
 """
 
 import warnings
@@ -139,7 +32,24 @@ warnings.filterwarnings(
 )
 
 
-ALLOWED_EXTENSIONS = ["", ".xlsx", ".xls", ".csv", ".txt"]
+ALLOWED_EXTENSIONS = [
+    "",
+    ".xlsx",
+    ".xls",
+    ".csv",
+    ".txt",
+]
+
+CUSTOMER_MASTER_COLUMN_ALIASES = {
+    "Cliente": [
+        "Cliente",
+        "Customer",
+    ],
+    "Grupo": [
+        "Grupo",
+        "Group",
+    ],
+}
 
 SALESFORCE_HEADER_KEYWORDS = [
     "Proprietário da conta",
@@ -167,6 +77,7 @@ RATE_TYPE_TO_TCOT_FALLBACKS = {
 SAP_FX_COLUMN_ALIASES = {
     "tcot": [
         "tcot",
+        "ExRt",
         "cgcâ",
         "cgc",
         "tipo cotação",
@@ -200,6 +111,7 @@ SAP_FX_COLUMN_ALIASES = {
     ],
     "raw_rate": [
         "taxa câmbio",
+        "Exch. Rate",
         "taxa cambio",
         "tipo cambio",
         "exchange rate",
@@ -207,12 +119,14 @@ SAP_FX_COLUMN_ALIASES = {
     ],
     "factor_from": [
         "fator (origem)",
+        "Ratio (from)",
         "factor (de)",
         "factor de",
         "factor from",
     ],
     "factor_to": [
         "fator (para)",
+        "Ratio (to)",
         "factor (a)",
         "factor a",
         "factor to",
@@ -221,23 +135,10 @@ SAP_FX_COLUMN_ALIASES = {
 
 
 def has_allowed_extension(file_path):
-    """
-    Return True if the file extension is allowed.
-    """
     return file_path.suffix.lower() in ALLOWED_EXTENSIONS
 
 
 def to_datetime_value(value):
-    """
-    Convert a value to pandas datetime.
-
-    Handles:
-    - Excel dates
-    - Python datetime values
-    - ISO dates like 2026-02-28
-    - SAP dates like 28.02.2026
-    - Local dates like 28/02/2026
-    """
     if pd.isna(value):
         return pd.NaT
 
@@ -249,51 +150,57 @@ def to_datetime_value(value):
     if value_text == "":
         return pd.NaT
 
-    if len(value_text) >= 10 and value_text[4:5] == "-" and value_text[7:8] == "-":
-        return pd.to_datetime(value_text, errors="coerce", dayfirst=False)
+    if (
+        len(value_text) >= 10
+        and value_text[4:5] == "-"
+        and value_text[7:8] == "-"
+    ):
+        return pd.to_datetime(
+            value_text,
+            errors="coerce",
+            dayfirst=False,
+        )
 
-    return pd.to_datetime(value_text, errors="coerce", dayfirst=True)
-
+    return pd.to_datetime(
+        value_text,
+        errors="coerce",
+        dayfirst=True,
+    )
 
 
 def get_period_suffix(module_config):
-    """
-    Return YYYYMMDD based on the module TO date.
-
-    Example:
-    module_config["to"] = 2026-02-28
-    returns:
-    20260228
-    """
-    to_date = to_datetime_value(module_config.get("to", ""))
+    to_date = to_datetime_value(
+        module_config.get("to", "")
+    )
 
     if pd.isna(to_date):
-        raise ValueError("Invalid module TO date. Could not build period suffix.")
+        raise ValueError(
+            "Invalid module TO date. "
+            "Could not build period suffix."
+        )
 
     return to_date.strftime("%Y%m%d")
 
 
 def get_rate_sheet_name(module_config):
-    """
-    Build old Exchange Rates sheet name based on module TO date.
-
-    This function is kept for compatibility, but the current process uses
-    SAP FX export files named FxRates_YYYYMMDD.xlsx.
-    """
-    to_date = to_datetime_value(module_config.get("to", ""))
+    to_date = to_datetime_value(
+        module_config.get("to", "")
+    )
 
     if pd.isna(to_date):
-        raise ValueError("Invalid module TO date. Could not build rate sheet name.")
+        raise ValueError(
+            "Invalid module TO date. "
+            "Could not build rate sheet name."
+        )
 
     return f"FX Rates - {to_date.strftime('%b %y')}"
 
 
-def find_all_files_containing(base_folder, text_to_find):
-    """
-    Find all files where the file name contains a given text.
-    """
+def find_all_files_containing(
+    base_folder,
+    text_to_find,
+):
     matching_files = []
-
     text_to_find = text_to_find.lower()
 
     for file_path in base_folder.iterdir():
@@ -305,17 +212,23 @@ def find_all_files_containing(base_folder, text_to_find):
 
         file_name = file_path.name.lower()
 
-        if text_to_find in file_name and has_allowed_extension(file_path):
+        if (
+            text_to_find in file_name
+            and has_allowed_extension(file_path)
+        ):
             matching_files.append(file_path)
 
     return sorted(matching_files)
 
 
-def find_first_file_containing(base_folder, text_to_find):
-    """
-    Find the first file where the file name contains a given text.
-    """
-    files = find_all_files_containing(base_folder, text_to_find)
+def find_first_file_containing(
+    base_folder,
+    text_to_find,
+):
+    files = find_all_files_containing(
+        base_folder,
+        text_to_find,
+    )
 
     if len(files) == 0:
         return None
@@ -323,13 +236,10 @@ def find_first_file_containing(base_folder, text_to_find):
     return files[0]
 
 
-def find_all_files_containing_all(base_folder, required_texts):
-    """
-    Find all files where the file name contains all required texts.
-
-    Example:
-    required_texts = ["ZTFI098", "20260228"]
-    """
+def find_all_files_containing_all(
+    base_folder,
+    required_texts,
+):
     matching_files = []
 
     required_texts_normalized = [
@@ -349,7 +259,6 @@ def find_all_files_containing_all(base_folder, required_texts):
             continue
 
         file_name = file_path.name.lower()
-
         match = True
 
         for required_text in required_texts_normalized:
@@ -363,11 +272,14 @@ def find_all_files_containing_all(base_folder, required_texts):
     return sorted(matching_files)
 
 
-def find_first_file_containing_all(base_folder, required_texts):
-    """
-    Find the first file where the file name contains all required texts.
-    """
-    files = find_all_files_containing_all(base_folder, required_texts)
+def find_first_file_containing_all(
+    base_folder,
+    required_texts,
+):
+    files = find_all_files_containing_all(
+        base_folder,
+        required_texts,
+    )
 
     if len(files) == 0:
         return None
@@ -376,18 +288,25 @@ def find_first_file_containing_all(base_folder, required_texts):
 
 
 def clean_dataframe(dataframe):
-    """
-    Remove empty columns and strip column names.
-    """
     df = dataframe.copy()
 
-    df = df.dropna(axis=1, how="all")
-    df.columns = [str(column).strip() for column in df.columns]
+    df = df.dropna(
+        axis=1,
+        how="all",
+    )
+
+    df.columns = [
+        str(column).strip()
+        for column in df.columns
+    ]
 
     unnamed_columns = [
         column
         for column in df.columns
-        if str(column).strip().lower().startswith("unnamed")
+        if str(column)
+        .strip()
+        .lower()
+        .startswith("unnamed")
     ]
 
     for column in unnamed_columns:
@@ -398,58 +317,73 @@ def clean_dataframe(dataframe):
 
 
 def read_table_file(file_path):
-    """
-    Read an Excel or CSV file using the first row as headers.
-    """
     suffix = file_path.suffix.lower()
 
     try:
         if suffix == ".csv":
             df = pd.read_csv(file_path)
+
         elif suffix in [".xlsx", ".xls"]:
             df = pd.read_excel(file_path)
+
         else:
-            raise ValueError(f"Unsupported file extension: {file_path.suffix}")
+            raise ValueError(
+                f"Unsupported file extension: "
+                f"{file_path.suffix}"
+            )
+
     except PermissionError:
         raise PermissionError(
-            "Python cannot open this file because access was denied. "
-            "Close the file in Excel, make sure it is available locally in OneDrive, "
+            "Python cannot open this file because "
+            "access was denied. Close the file in Excel, "
+            "make sure it is available locally in OneDrive, "
             f"and try again. File: {file_path}"
         )
 
     return clean_dataframe(df)
 
 
-def read_preview_without_headers(file_path, number_of_rows=30):
-    """
-    Read the first rows without assuming headers.
-    """
+def read_preview_without_headers(
+    file_path,
+    number_of_rows=30,
+):
     suffix = file_path.suffix.lower()
 
     try:
         if suffix == ".csv":
-            return pd.read_csv(file_path, header=None, nrows=number_of_rows)
+            return pd.read_csv(
+                file_path,
+                header=None,
+                nrows=number_of_rows,
+            )
 
         if suffix in [".xlsx", ".xls"]:
-            return pd.read_excel(file_path, header=None, nrows=number_of_rows)
+            return pd.read_excel(
+                file_path,
+                header=None,
+                nrows=number_of_rows,
+            )
+
     except PermissionError:
         raise PermissionError(
-            "Python cannot open this file because access was denied. "
-            "Close the file in Excel, make sure it is available locally in OneDrive, "
+            "Python cannot open this file because "
+            "access was denied. Close the file in Excel, "
+            "make sure it is available locally in OneDrive, "
             f"and try again. File: {file_path}"
         )
 
-    raise ValueError(f"Unsupported file extension: {file_path.suffix}")
+    raise ValueError(
+        f"Unsupported file extension: "
+        f"{file_path.suffix}"
+    )
 
 
-def detect_header_row(file_path, expected_keywords, max_rows_to_scan=30, minimum_matches=3):
-    """
-    Detect a real header row by scanning the first rows.
-
-    Returns zero-based row index for pandas.
-    Example:
-    - Excel row 10 returns 9.
-    """
+def detect_header_row(
+    file_path,
+    expected_keywords,
+    max_rows_to_scan=30,
+    minimum_matches=3,
+):
     preview_df = read_preview_without_headers(
         file_path,
         number_of_rows=max_rows_to_scan,
@@ -466,7 +400,11 @@ def detect_header_row(file_path, expected_keywords, max_rows_to_scan=30, minimum
         for value in row.tolist():
             value_text = str(value).strip().lower()
 
-            if value_text in ["", "nan", "none"]:
+            if value_text in [
+                "",
+                "nan",
+                "none",
+            ]:
                 continue
 
             row_values.append(value_text)
@@ -483,28 +421,46 @@ def detect_header_row(file_path, expected_keywords, max_rows_to_scan=30, minimum
     return None
 
 
-def read_file_with_detected_header(file_path, expected_keywords):
-    """
-    Detect a header row and read the file using that row.
-    """
-    header_row = detect_header_row(file_path, expected_keywords)
+def read_file_with_detected_header(
+    file_path,
+    expected_keywords,
+):
+    header_row = detect_header_row(
+        file_path,
+        expected_keywords,
+    )
 
     if header_row is None:
-        raise ValueError("Could not detect header row")
+        raise ValueError(
+            "Could not detect header row"
+        )
 
     suffix = file_path.suffix.lower()
 
     try:
         if suffix == ".csv":
-            df = pd.read_csv(file_path, header=header_row)
+            df = pd.read_csv(
+                file_path,
+                header=header_row,
+            )
+
         elif suffix in [".xlsx", ".xls"]:
-            df = pd.read_excel(file_path, header=header_row)
+            df = pd.read_excel(
+                file_path,
+                header=header_row,
+            )
+
         else:
-            raise ValueError(f"Unsupported file extension: {file_path.suffix}")
+            raise ValueError(
+                f"Unsupported file extension: "
+                f"{file_path.suffix}"
+            )
+
     except PermissionError:
         raise PermissionError(
-            "Python cannot open this file because access was denied. "
-            "Close the file in Excel, make sure it is available locally in OneDrive, "
+            "Python cannot open this file because "
+            "access was denied. Close the file in Excel, "
+            "make sure it is available locally in OneDrive, "
             f"and try again. File: {file_path}"
         )
 
@@ -514,9 +470,6 @@ def read_file_with_detected_header(file_path, expected_keywords):
 
 
 def combine_files(file_paths):
-    """
-    Read and combine multiple standard files into one DataFrame.
-    """
     dataframes = []
 
     for file_path in file_paths:
@@ -527,24 +480,17 @@ def combine_files(file_paths):
     if len(dataframes) == 0:
         return pd.DataFrame()
 
-    return pd.concat(dataframes, ignore_index=True)
+    return pd.concat(
+        dataframes,
+        ignore_index=True,
+    )
 
 
 def normalize_column_name(column_name):
-    """
-    Normalize a column name for comparisons.
-    """
     return str(column_name).strip().lower()
 
 
 def normalize_customer_key(value):
-    """
-    Normalize customer key.
-
-    Replicates VBA-like behavior:
-    - Numeric values become number-like text without leading zeros.
-    - Non-numeric values become uppercase text.
-    """
     if pd.isna(value):
         return ""
 
@@ -560,26 +506,16 @@ def normalize_customer_key(value):
             return str(int(numeric_value))
 
         return str(numeric_value)
+
     except ValueError:
         return value_text.upper()
 
 
 def normalize_erp_code(value):
-    """
-    Normalize ERP customer code.
-    """
     return normalize_customer_key(value)
 
 
 def normalize_company_code(value):
-    """
-    Normalize company code to 4 digits.
-
-    Examples:
-    30 -> 0030
-    0030 -> 0030
-    52 -> 0052
-    """
     if pd.isna(value):
         return ""
 
@@ -590,25 +526,14 @@ def normalize_company_code(value):
 
     try:
         numeric_value = int(float(value_text))
+
         return str(numeric_value).zfill(4)
+
     except ValueError:
         return value_text.zfill(4)
 
 
 def normalize_company_output(value):
-    """
-    Normalize company code for AR output without leading zeros.
-
-    This is used in AR output sheets.
-
-    Examples:
-    - 0030 -> 30
-    - 30 -> 30
-    - 0034 -> 34
-    - 34 -> 34
-    - 0052 -> 52
-    """
-
     if pd.isna(value):
         return ""
 
@@ -619,7 +544,9 @@ def normalize_company_output(value):
 
     try:
         numeric_value = int(float(value_text))
+
         return str(numeric_value)
+
     except ValueError:
         normalized_value = value_text.lstrip("0")
 
@@ -629,24 +556,21 @@ def normalize_company_output(value):
         return normalized_value
 
 
-
 def parse_companies(companies_value):
-    """
-    Parse COMPANIES from Config.xlsx.
-
-    Examples:
-    ALL -> []
-    0030,0034,0052 -> ["0030", "0034", "0052"]
-    """
     if pd.isna(companies_value):
         return []
 
-    companies_text = str(companies_value).strip()
+    companies_text = str(
+        companies_value
+    ).strip()
 
     if companies_text.upper() == "ALL":
         return []
 
-    parts = companies_text.replace(";", ",").split(",")
+    parts = companies_text.replace(
+        ";",
+        ",",
+    ).split(",")
 
     companies = []
 
@@ -659,13 +583,14 @@ def parse_companies(companies_value):
     return companies
 
 
-def filter_dataframe_by_companies(dataframe, company_column, companies_value):
-    """
-    Filter a DataFrame by company codes.
-
-    If COMPANIES = ALL, the original DataFrame is returned.
-    """
-    companies = parse_companies(companies_value)
+def filter_dataframe_by_companies(
+    dataframe,
+    company_column,
+    companies_value,
+):
+    companies = parse_companies(
+        companies_value
+    )
 
     if len(companies) == 0:
         return dataframe.copy()
@@ -673,42 +598,57 @@ def filter_dataframe_by_companies(dataframe, company_column, companies_value):
     df = dataframe.copy()
 
     if company_column not in df.columns:
-        raise ValueError(f"Company column '{company_column}' was not found.")
+        raise ValueError(
+            f"Company column '{company_column}' "
+            "was not found."
+        )
 
-    df["_NormalizedCompany"] = df[company_column].apply(normalize_company_code)
+    df["_NormalizedCompany"] = (
+        df[company_column].apply(
+            normalize_company_code
+        )
+    )
 
-    df = df[df["_NormalizedCompany"].isin(companies)].copy()
+    df = df[
+        df["_NormalizedCompany"].isin(
+            companies
+        )
+    ].copy()
 
-    df = df.drop(columns=["_NormalizedCompany"])
+    df = df.drop(
+        columns=["_NormalizedCompany"]
+    )
 
     return df
 
 
-def get_companies_summary(dataframe, company_column="Empresa"):
-    """
-    Return unique company codes found in a DataFrame.
-    """
+def get_companies_summary(
+    dataframe,
+    company_column="Empresa",
+):
     if dataframe.empty:
         return []
 
     if company_column not in dataframe.columns:
         return []
 
-    companies = dataframe[company_column].apply(normalize_company_code).dropna().unique()
+    companies = (
+        dataframe[company_column]
+        .apply(normalize_company_code)
+        .dropna()
+        .unique()
+    )
 
-    return sorted([company for company in companies if company != ""])
+    return sorted(
+        [
+            company
+            for company in companies
+            if company != ""
+        ]
+    )
 
 
 def to_number(value, default=0.0):
-    """
-    Convert a value to number.
-
-    Handles:
-    - numeric values
-    - blanks
-    - comma decimal separator
-    - thousands separators
-    """
     if pd.isna(value):
         return default
 
@@ -720,21 +660,35 @@ def to_number(value, default=0.0):
     if value_text == "":
         return default
 
-    if "," in value_text and "." not in value_text:
-        value_text = value_text.replace(",", ".")
-    elif "," in value_text and "." in value_text:
-        value_text = value_text.replace(",", "")
+    if (
+        "," in value_text
+        and "." not in value_text
+    ):
+        value_text = value_text.replace(
+            ",",
+            ".",
+        )
+
+    elif (
+        "," in value_text
+        and "." in value_text
+    ):
+        value_text = value_text.replace(
+            ",",
+            "",
+        )
 
     try:
         return float(value_text)
+
     except ValueError:
         return default
 
 
-def validate_required_columns(dataframe, required_columns):
-    """
-    Validate whether a DataFrame contains required columns.
-    """
+def validate_required_columns(
+    dataframe,
+    required_columns,
+):
     actual_columns_normalized = {
         normalize_column_name(column)
         for column in dataframe.columns
@@ -743,21 +697,88 @@ def validate_required_columns(dataframe, required_columns):
     missing_columns = []
 
     for required_column in required_columns:
-        required_column_normalized = normalize_column_name(required_column)
+        required_column_normalized = (
+            normalize_column_name(
+                required_column
+            )
+        )
 
-        if required_column_normalized not in actual_columns_normalized:
-            missing_columns.append(required_column)
+        if (
+            required_column_normalized
+            not in actual_columns_normalized
+        ):
+            missing_columns.append(
+                required_column
+            )
 
     return missing_columns
 
 
+def normalize_customer_master_columns(
+    dataframe,
+):
+    dataframe = dataframe.copy()
+    rename_map = {}
+
+    for canonical_name, aliases in (
+        CUSTOMER_MASTER_COLUMN_ALIASES.items()
+    ):
+        normalized_aliases = {
+            normalize_column_name(alias)
+            for alias in aliases
+        }
+
+        matching_columns = [
+            column
+            for column in dataframe.columns
+            if normalize_column_name(column)
+            in normalized_aliases
+        ]
+
+        if len(matching_columns) == 0:
+            raise ValueError(
+                "LBR Customer is missing required "
+                f"column '{canonical_name}'. "
+                f"Accepted aliases: {aliases}. "
+                f"Available columns: "
+                f"{list(dataframe.columns)}"
+            )
+
+        if len(matching_columns) > 1:
+            raise ValueError(
+                "LBR Customer contains ambiguous "
+                f"columns for '{canonical_name}': "
+                f"{matching_columns}. Keep only one "
+                "accepted alias for this field."
+            )
+
+        source_column = matching_columns[0]
+
+        if source_column != canonical_name:
+            rename_map[source_column] = (
+                canonical_name
+            )
+
+    normalized_dataframe = (
+        dataframe.rename(
+            columns=rename_map,
+        ).copy()
+    )
+
+    if normalized_dataframe.empty:
+        raise ValueError(
+            "LBR Customer contains no data rows."
+        )
+
+    return normalized_dataframe
+
+
 def read_salesforce_file(file_path):
-    """
-    Read a Salesforce file using dynamic header detection.
-    """
-    df, header_row = read_file_with_detected_header(
-        file_path,
-        SALESFORCE_HEADER_KEYWORDS,
+    df, header_row = (
+        read_file_with_detected_header(
+            file_path,
+            SALESFORCE_HEADER_KEYWORDS,
+        )
     )
 
     return {
@@ -769,32 +790,24 @@ def read_salesforce_file(file_path):
     }
 
 
-# ============================================================
-# SAP FX rates from SQVI / TCURR export
-# ============================================================
-
-def find_fx_rates_file(input_folder, module_config):
-    """
-    Find SAP FX rates file using period suffix.
-
-    Expected file name:
-        FxRates_YYYYMMDD.xlsx
-
-    Example:
-        FxRates_20260228.xlsx
-    """
-    period_suffix = get_period_suffix(module_config)
+def find_fx_rates_file(
+    input_folder,
+    module_config,
+):
+    period_suffix = get_period_suffix(
+        module_config
+    )
 
     return find_first_file_containing_all(
         input_folder,
-        ["FxRates", period_suffix],
+        [
+            "FxRates",
+            period_suffix,
+        ],
     )
 
 
 def build_sap_fx_rename_map(columns):
-    """
-    Build rename map for SAP FX export columns.
-    """
     rename_map = {}
 
     normalized_columns = {
@@ -802,26 +815,45 @@ def build_sap_fx_rename_map(columns):
         for column in columns
     }
 
-    for internal_name, aliases in SAP_FX_COLUMN_ALIASES.items():
+    for internal_name, aliases in (
+        SAP_FX_COLUMN_ALIASES.items()
+    ):
         for alias in aliases:
-            alias_normalized = normalize_column_name(alias)
+            alias_normalized = (
+                normalize_column_name(alias)
+            )
 
-            if alias_normalized in normalized_columns:
-                original_column = normalized_columns[alias_normalized]
-                rename_map[original_column] = internal_name
+            if (
+                alias_normalized
+                in normalized_columns
+            ):
+                original_column = (
+                    normalized_columns[
+                        alias_normalized
+                    ]
+                )
+
+                rename_map[original_column] = (
+                    internal_name
+                )
+
                 break
 
     return rename_map
 
 
 def read_sap_fx_rates_file(fx_rates_file):
-    """
-    Read SAP SQVI / TCURR FX export and normalize columns.
-    """
-    raw_df = read_table_file(fx_rates_file)
+    raw_df = read_table_file(
+        fx_rates_file
+    )
 
-    rename_map = build_sap_fx_rename_map(raw_df.columns)
-    fx_df = raw_df.rename(columns=rename_map).copy()
+    rename_map = build_sap_fx_rename_map(
+        raw_df.columns
+    )
+
+    fx_df = raw_df.rename(
+        columns=rename_map
+    ).copy()
 
     required_columns = [
         "tcot",
@@ -841,54 +873,124 @@ def read_sap_fx_rates_file(fx_rates_file):
 
     if missing_columns:
         raise ValueError(
-            "Missing SAP FX required columns after normalization. "
+            "Missing SAP FX required columns "
+            "after normalization. "
             f"Missing: {missing_columns}. "
-            f"Available columns: {list(raw_df.columns)}"
+            f"Available columns: "
+            f"{list(raw_df.columns)}"
         )
 
-    fx_df["tcot"] = fx_df["tcot"].astype(str).str.strip().str.upper()
-    fx_df["from_currency"] = fx_df["from_currency"].astype(str).str.strip().str.upper()
-    fx_df["to_currency"] = fx_df["to_currency"].astype(str).str.strip().str.upper()
-    fx_df["valid_from"] = fx_df["valid_from"].apply(to_datetime_value)
-    fx_df["raw_rate"] = fx_df["raw_rate"].apply(lambda value: to_number(value, default=0.0))
-    fx_df["factor_from"] = fx_df["factor_from"].apply(lambda value: to_number(value, default=0.0))
-    fx_df["factor_to"] = fx_df["factor_to"].apply(lambda value: to_number(value, default=0.0))
+    fx_df["tcot"] = (
+        fx_df["tcot"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
 
-    fx_df = fx_df.dropna(subset=["valid_from"]).copy()
+    fx_df["from_currency"] = (
+        fx_df["from_currency"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    fx_df["to_currency"] = (
+        fx_df["to_currency"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    fx_df["valid_from"] = (
+        fx_df["valid_from"].apply(
+            to_datetime_value
+        )
+    )
+
+    fx_df["raw_rate"] = (
+        fx_df["raw_rate"].apply(
+            lambda value: to_number(
+                value,
+                default=0.0,
+            )
+        )
+    )
+
+    fx_df["factor_from"] = (
+        fx_df["factor_from"].apply(
+            lambda value: to_number(
+                value,
+                default=0.0,
+            )
+        )
+    )
+
+    fx_df["factor_to"] = (
+        fx_df["factor_to"].apply(
+            lambda value: to_number(
+                value,
+                default=0.0,
+            )
+        )
+    )
+
+    fx_df = fx_df.dropna(
+        subset=["valid_from"]
+    ).copy()
 
     return fx_df, raw_df
 
 
-def get_requested_tcots(requested_rate_type, allow_tcot_fallback):
-    """
-    Return TCot search sequence for requested rate type.
-    """
-    requested_rate_type = str(requested_rate_type).strip().lower()
+def get_requested_tcots(
+    requested_rate_type,
+    allow_tcot_fallback,
+):
+    requested_rate_type = str(
+        requested_rate_type
+    ).strip().lower()
 
-    if requested_rate_type not in RATE_TYPE_TO_PRIMARY_TCOT:
+    if (
+        requested_rate_type
+        not in RATE_TYPE_TO_PRIMARY_TCOT
+    ):
         raise ValueError(
-            f"Invalid requested_rate_type: {requested_rate_type}. "
-            f"Valid values: {list(RATE_TYPE_TO_PRIMARY_TCOT.keys())}"
+            "Invalid requested_rate_type: "
+            f"{requested_rate_type}. "
+            f"Valid values: "
+            f"{list(RATE_TYPE_TO_PRIMARY_TCOT.keys())}"
         )
 
     if allow_tcot_fallback:
-        return RATE_TYPE_TO_TCOT_FALLBACKS[requested_rate_type]
+        return RATE_TYPE_TO_TCOT_FALLBACKS[
+            requested_rate_type
+        ]
 
-    return [RATE_TYPE_TO_PRIMARY_TCOT[requested_rate_type]]
+    return [
+        RATE_TYPE_TO_PRIMARY_TCOT[
+            requested_rate_type
+        ]
+    ]
 
 
-def calculate_adjusted_rate(raw_rate, factor_from, factor_to):
-    """
-    Calculate SAP adjusted rate using factors.
+def calculate_adjusted_rate(
+    raw_rate,
+    factor_from,
+    factor_to,
+):
+    raw_rate = to_number(
+        raw_rate,
+        default=0.0,
+    )
 
-    Rules:
-    - blank/blank, 0/0 or 1/1: use raw rate as-is.
-    - otherwise:
-        adjusted_rate = raw_rate * factor_to / factor_from
-    """
-    raw_rate = to_number(raw_rate, default=0.0)
-    factor_from = to_number(factor_from, default=0.0)
-    factor_to = to_number(factor_to, default=0.0)
+    factor_from = to_number(
+        factor_from,
+        default=0.0,
+    )
+
+    factor_to = to_number(
+        factor_to,
+        default=0.0,
+    )
 
     if factor_from == 0 and factor_to == 0:
         return raw_rate, ""
@@ -897,9 +999,16 @@ def calculate_adjusted_rate(raw_rate, factor_from, factor_to):
         return raw_rate, ""
 
     if factor_from == 0 and factor_to != 0:
-        return raw_rate, "Invalid factor: origin factor is zero"
+        return (
+            raw_rate,
+            "Invalid factor: origin factor is zero",
+        )
 
-    adjusted_rate = raw_rate * factor_to / factor_from
+    adjusted_rate = (
+        raw_rate
+        * factor_to
+        / factor_from
+    )
 
     return adjusted_rate, "Review factor"
 
@@ -911,39 +1020,51 @@ def build_candidate_dates(
     allow_future_date=False,
     max_future_days=0,
 ):
-    """
-    Build date candidates for FX search.
-
-    Exact date is always first.
-    Previous dates are optional.
-    Future dates are disabled by default.
-    """
-    requested_date = to_datetime_value(requested_date)
+    requested_date = to_datetime_value(
+        requested_date
+    )
 
     if pd.isna(requested_date):
-        raise ValueError("Invalid requested FX date.")
+        raise ValueError(
+            "Invalid requested FX date."
+        )
 
     requested_date = requested_date.normalize()
-
     candidates = [(requested_date, "")]
 
     if allow_previous_date:
-        for days_back in range(1, max_previous_days + 1):
-            candidate_date = requested_date - timedelta(days=days_back)
+        for days_back in range(
+            1,
+            max_previous_days + 1,
+        ):
+            candidate_date = (
+                requested_date
+                - timedelta(days=days_back)
+            )
+
             candidates.append(
                 (
                     candidate_date,
-                    f"Used previous available date: {candidate_date.strftime('%Y-%m-%d')}",
+                    "Used previous available date: "
+                    f"{candidate_date.strftime('%Y-%m-%d')}",
                 )
             )
 
     if allow_future_date:
-        for days_forward in range(1, max_future_days + 1):
-            candidate_date = requested_date + timedelta(days=days_forward)
+        for days_forward in range(
+            1,
+            max_future_days + 1,
+        ):
+            candidate_date = (
+                requested_date
+                + timedelta(days=days_forward)
+            )
+
             candidates.append(
                 (
                     candidate_date,
-                    f"Used future date: {candidate_date.strftime('%Y-%m-%d')}",
+                    "Used future date: "
+                    f"{candidate_date.strftime('%Y-%m-%d')}",
                 )
             )
 
@@ -960,36 +1081,33 @@ def select_fx_rate_row(
     allow_tcot_fallback=True,
     allow_future_date=False,
 ):
-    """
-    Select one FX rate from SAP export.
+    currency = str(
+        currency
+    ).strip().upper()
 
-    Search hierarchy:
-    1. Preferred TCot.
-    2. Exact date.
-    3. Currency -> USD.
-    4. USD -> Currency.
-    5. Previous dates if allowed.
-    6. TCot fallback if allowed.
-
-    Result always represents:
-        Currency -> USD
-    """
-    currency = str(currency).strip().upper()
-    requested_date = to_datetime_value(requested_date)
+    requested_date = to_datetime_value(
+        requested_date
+    )
 
     if pd.isna(requested_date):
-        raise ValueError("Invalid requested FX date.")
+        raise ValueError(
+            "Invalid requested FX date."
+        )
 
     requested_date = requested_date.normalize()
 
-    requested_rate_type_normalized = str(requested_rate_type).strip().lower()
+    requested_rate_type_normalized = str(
+        requested_rate_type
+    ).strip().lower()
 
     tcots = get_requested_tcots(
         requested_rate_type_normalized,
         allow_tcot_fallback,
     )
 
-    primary_tcot = RATE_TYPE_TO_PRIMARY_TCOT[requested_rate_type_normalized]
+    primary_tcot = RATE_TYPE_TO_PRIMARY_TCOT[
+        requested_rate_type_normalized
+    ]
 
     date_candidates = build_candidate_dates(
         requested_date=requested_date,
@@ -1003,26 +1121,43 @@ def select_fx_rate_row(
         tcot_note = ""
 
         if tcot != primary_tcot:
-            tcot_note = f"Used TCot fallback: {tcot}"
+            tcot_note = (
+                f"Used TCot fallback: {tcot}"
+            )
 
-        for candidate_date, date_note in date_candidates:
+        for (
+            candidate_date,
+            date_note,
+        ) in date_candidates:
             filtered_df = fx_df[
                 (fx_df["tcot"] == tcot)
-                & (fx_df["valid_from"] == candidate_date)
+                & (
+                    fx_df["valid_from"]
+                    == candidate_date
+                )
             ]
 
             if filtered_df.empty:
                 continue
 
             direct_rows = filtered_df[
-                (filtered_df["from_currency"] == currency)
-                & (filtered_df["to_currency"] == "USD")
+                (
+                    filtered_df["from_currency"]
+                    == currency
+                )
+                & (
+                    filtered_df["to_currency"]
+                    == "USD"
+                )
             ]
 
             if not direct_rows.empty:
                 row = direct_rows.iloc[0]
 
-                adjusted_rate, factor_note = calculate_adjusted_rate(
+                (
+                    adjusted_rate,
+                    factor_note,
+                ) = calculate_adjusted_rate(
                     row["raw_rate"],
                     row["factor_from"],
                     row["factor_to"],
@@ -1030,34 +1165,59 @@ def select_fx_rate_row(
 
                 notes = [
                     note
-                    for note in [date_note, tcot_note, factor_note]
+                    for note in [
+                        date_note,
+                        tcot_note,
+                        factor_note,
+                    ]
                     if str(note).strip() != ""
                 ]
 
                 return {
                     "currency": currency,
-                    "requested_rate_type": requested_rate_type_normalized,
+                    "requested_rate_type": (
+                        requested_rate_type_normalized
+                    ),
                     "selected_tcot": tcot,
-                    "direction": f"{currency}->USD",
-                    "sap_valid_date": row["valid_from"],
-                    "sap_raw_rate": row["raw_rate"],
+                    "direction": (
+                        f"{currency}->USD"
+                    ),
+                    "sap_valid_date": (
+                        row["valid_from"]
+                    ),
+                    "sap_raw_rate": (
+                        row["raw_rate"]
+                    ),
                     "adjusted_rate": adjusted_rate,
                     "final_fx_rate": adjusted_rate,
-                    "factor_from": row["factor_from"],
-                    "factor_to": row["factor_to"],
+                    "factor_from": (
+                        row["factor_from"]
+                    ),
+                    "factor_to": (
+                        row["factor_to"]
+                    ),
                     "status": "Found",
                     "notes": "; ".join(notes),
                 }
 
             inverse_rows = filtered_df[
-                (filtered_df["from_currency"] == "USD")
-                & (filtered_df["to_currency"] == currency)
+                (
+                    filtered_df["from_currency"]
+                    == "USD"
+                )
+                & (
+                    filtered_df["to_currency"]
+                    == currency
+                )
             ]
 
             if not inverse_rows.empty:
                 row = inverse_rows.iloc[0]
 
-                adjusted_rate, factor_note = calculate_adjusted_rate(
+                (
+                    adjusted_rate,
+                    factor_note,
+                ) = calculate_adjusted_rate(
                     row["raw_rate"],
                     row["factor_from"],
                     row["factor_to"],
@@ -1066,36 +1226,62 @@ def select_fx_rate_row(
                 if adjusted_rate == 0:
                     final_fx_rate = None
                     status = "Not found"
-                    inverse_note = "Cannot invert zero adjusted rate"
+                    inverse_note = (
+                        "Cannot invert zero adjusted rate"
+                    )
+
                 else:
-                    final_fx_rate = 1 / adjusted_rate
+                    final_fx_rate = (
+                        1 / adjusted_rate
+                    )
                     status = "Found"
-                    inverse_note = "Used inverse direction"
+                    inverse_note = (
+                        "Used inverse direction"
+                    )
 
                 notes = [
                     note
-                    for note in [date_note, tcot_note, factor_note, inverse_note]
+                    for note in [
+                        date_note,
+                        tcot_note,
+                        factor_note,
+                        inverse_note,
+                    ]
                     if str(note).strip() != ""
                 ]
 
                 return {
                     "currency": currency,
-                    "requested_rate_type": requested_rate_type_normalized,
+                    "requested_rate_type": (
+                        requested_rate_type_normalized
+                    ),
                     "selected_tcot": tcot,
-                    "direction": f"USD->{currency}",
-                    "sap_valid_date": row["valid_from"],
-                    "sap_raw_rate": row["raw_rate"],
+                    "direction": (
+                        f"USD->{currency}"
+                    ),
+                    "sap_valid_date": (
+                        row["valid_from"]
+                    ),
+                    "sap_raw_rate": (
+                        row["raw_rate"]
+                    ),
                     "adjusted_rate": adjusted_rate,
                     "final_fx_rate": final_fx_rate,
-                    "factor_from": row["factor_from"],
-                    "factor_to": row["factor_to"],
+                    "factor_from": (
+                        row["factor_from"]
+                    ),
+                    "factor_to": (
+                        row["factor_to"]
+                    ),
                     "status": status,
                     "notes": "; ".join(notes),
                 }
 
     return {
         "currency": currency,
-        "requested_rate_type": requested_rate_type_normalized,
+        "requested_rate_type": (
+            requested_rate_type_normalized
+        ),
         "selected_tcot": "",
         "direction": "",
         "sap_valid_date": pd.NaT,
@@ -1105,7 +1291,10 @@ def select_fx_rate_row(
         "factor_from": None,
         "factor_to": None,
         "status": "Not found",
-        "notes": "Rate not available in SAP export for requested currency/date/type.",
+        "notes": (
+            "Rate not available in SAP export "
+            "for requested currency/date/type."
+        ),
     }
 
 
@@ -1119,21 +1308,17 @@ def get_fx_rate_from_sap_export(
     allow_tcot_fallback=True,
     allow_future_date=False,
 ):
-    """
-    Read FX rate from SAP SQVI / TCURR export.
-
-    Current AR_001 usage:
-    - currency = BRL
-    - requested_rate_type = spot_bs
-    - TCot priority = EN, then M if fallback is allowed
-    - output rate = BRL -> USD
-    """
-    fx_df, raw_df = read_sap_fx_rates_file(fx_rates_file)
+    fx_df, raw_df = read_sap_fx_rates_file(
+        fx_rates_file
+    )
 
     result = select_fx_rate_row(
         fx_df=fx_df,
         currency=currency,
-        requested_date=module_config.get("to", ""),
+        requested_date=module_config.get(
+            "to",
+            "",
+        ),
         requested_rate_type=requested_rate_type,
         allow_previous_date=allow_previous_date,
         max_previous_days=max_previous_days,
@@ -1147,15 +1332,21 @@ def get_fx_rate_from_sap_export(
 
     if result["status"] != "Found":
         raise ValueError(
-            f"FX rate not found. Currency: {currency}. "
-            f"Requested rate type: {requested_rate_type}. "
+            "FX rate not found. "
+            f"Currency: {currency}. "
+            "Requested rate type: "
+            f"{requested_rate_type}. "
             f"File: {fx_rates_file}. "
             f"Notes: {result['notes']}"
         )
 
-    if result["final_fx_rate"] is None or result["final_fx_rate"] == 0:
+    if (
+        result["final_fx_rate"] is None
+        or result["final_fx_rate"] == 0
+    ):
         raise ValueError(
-            f"FX rate is empty or zero. Currency: {currency}. "
+            "FX rate is empty or zero. "
+            f"Currency: {currency}. "
             f"File: {fx_rates_file}. "
             f"Details: {result}"
         )
@@ -1169,97 +1360,130 @@ def get_fx_rate_from_exchange_rates(
     currency="BRL",
     rate_column="SPOT - BS",
 ):
-    """
-    Legacy function.
-
-    Kept only for compatibility with older code.
-
-    The current process should use:
-        get_fx_rate_from_sap_export
-
-    This function still reads the old Exchange Rates workbook if ever needed.
-    """
-    sheet_name = get_rate_sheet_name(module_config)
+    sheet_name = get_rate_sheet_name(
+        module_config
+    )
 
     try:
-        rates_df = pd.read_excel(exchange_rates_file, sheet_name=sheet_name)
+        rates_df = pd.read_excel(
+            exchange_rates_file,
+            sheet_name=sheet_name,
+        )
+
     except PermissionError:
         raise PermissionError(
-            "Python cannot open this Exchange Rates file because access was denied. "
-            "Close the file in Excel, make sure it is available locally in OneDrive, "
-            f"and try again. File: {exchange_rates_file}"
+            "Python cannot open this Exchange Rates "
+            "file because access was denied. "
+            "Close the file in Excel, make sure it is "
+            "available locally in OneDrive, "
+            f"and try again. File: "
+            f"{exchange_rates_file}"
         )
 
     rates_df = clean_dataframe(rates_df)
 
     if rates_df.empty:
-        raise ValueError(f"Exchange rates sheet '{sheet_name}' is empty.")
+        raise ValueError(
+            f"Exchange rates sheet '{sheet_name}' "
+            "is empty."
+        )
 
     first_column = rates_df.columns[0]
 
-    currency_normalized = currency.strip().upper()
+    currency_normalized = (
+        currency.strip().upper()
+    )
 
     rate_rows = rates_df[
-        rates_df[first_column].astype(str).str.strip().str.upper() == currency_normalized
+        rates_df[first_column]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        == currency_normalized
     ]
 
     if rate_rows.empty:
         raise ValueError(
-            f"Currency {currency} was not found in exchange rates sheet {sheet_name}."
+            f"Currency {currency} was not found "
+            f"in exchange rates sheet {sheet_name}."
         )
 
     if rate_column not in rates_df.columns:
         raise ValueError(
-            f"Rate column '{rate_column}' was not found in exchange rates sheet {sheet_name}."
+            f"Rate column '{rate_column}' "
+            f"was not found in exchange rates "
+            f"sheet {sheet_name}."
         )
 
-    rate_value = rate_rows.iloc[0][rate_column]
+    rate_value = (
+        rate_rows.iloc[0][rate_column]
+    )
 
-    fx_rate = to_number(rate_value, default=0.0)
+    fx_rate = to_number(
+        rate_value,
+        default=0.0,
+    )
 
     if fx_rate == 0:
         raise ValueError(
-            f"FX rate for {currency} in column '{rate_column}' is zero or invalid."
+            f"FX rate for {currency} in column "
+            f"'{rate_column}' is zero or invalid."
         )
 
     return fx_rate
 
 
 def build_customer_erp_map(customer_df):
-    """
-    Build a dictionary mapping SAP customer number to ERP customer code.
-    """
     customer_erp_map = {}
 
     if customer_df.empty:
         return customer_erp_map
 
     for _, row in customer_df.iterrows():
-        sap_customer_number = row.get("Cliente", "")
-        erp_customer_code = row.get("Grupo", "")
+        sap_customer_number = row.get(
+            "Cliente",
+            "",
+        )
 
-        sap_customer_key = normalize_customer_key(sap_customer_number)
+        erp_customer_code = row.get(
+            "Grupo",
+            "",
+        )
 
-        if sap_customer_key != "" and sap_customer_key not in customer_erp_map:
-            customer_erp_map[sap_customer_key] = str(erp_customer_code).strip()
+        sap_customer_key = (
+            normalize_customer_key(
+                sap_customer_number
+            )
+        )
+
+        if (
+            sap_customer_key != ""
+            and sap_customer_key
+            not in customer_erp_map
+        ):
+            customer_erp_map[
+                sap_customer_key
+            ] = str(
+                erp_customer_code
+            ).strip()
 
     return customer_erp_map
 
 
-def build_intercompany_exclusion_set(intercompany_df=None):
-    """
-    Build a set of customers to exclude.
-
-    Intercompany exclusions are maintained in:
-        core/intercompanies.py
-
-    The optional intercompany_df parameter is kept for future compatibility.
-    """
+def build_intercompany_exclusion_set(
+    intercompany_df=None,
+):
     excluded_customers = set()
 
     for item in INTERCOMPANIES:
-        customer = item.get("customer", "")
-        key = normalize_customer_key(customer)
+        customer = item.get(
+            "customer",
+            "",
+        )
+
+        key = normalize_customer_key(
+            customer
+        )
 
         if key != "":
             excluded_customers.add(key)
@@ -1268,113 +1492,162 @@ def build_intercompany_exclusion_set(intercompany_df=None):
 
 
 def build_intercompany_detail_map():
-    """
-    Build a dictionary with intercompany exclusion details.
-
-    Returns:
-        {
-            "534": "PROMONLOGICALIS TECNOLOGIA S/A",
-            ...
-        }
-    """
     detail_map = {}
 
     for item in INTERCOMPANIES:
-        customer = item.get("customer", "")
-        excluded_intercompany = item.get("excluded_intercompany", "")
+        customer = item.get(
+            "customer",
+            "",
+        )
 
-        key = normalize_customer_key(customer)
+        excluded_intercompany = item.get(
+            "excluded_intercompany",
+            "",
+        )
+
+        key = normalize_customer_key(
+            customer
+        )
 
         if key != "":
-            detail_map[key] = excluded_intercompany
+            detail_map[key] = (
+                excluded_intercompany
+            )
 
     return detail_map
 
 
-def build_salesforce_status_map(sf_current_df):
-    """
-    Build dictionary of ERP customer code to Salesforce limit status.
-    """
+def build_salesforce_status_map(
+    sf_current_df,
+):
     status_map = {}
 
     if sf_current_df.empty:
         return status_map
 
     for _, row in sf_current_df.iterrows():
-        erp_customer_code = normalize_erp_code(row.get("Código ERP", ""))
-        limit_status = str(row.get("Status do Limite", "")).strip()
+        erp_customer_code = normalize_erp_code(
+            row.get(
+                "Código ERP",
+                "",
+            )
+        )
 
-        if erp_customer_code != "" and erp_customer_code not in status_map:
-            status_map[erp_customer_code] = limit_status
+        limit_status = str(
+            row.get(
+                "Status do Limite",
+                "",
+            )
+        ).strip()
+
+        if (
+            erp_customer_code != ""
+            and erp_customer_code
+            not in status_map
+        ):
+            status_map[
+                erp_customer_code
+            ] = limit_status
 
     return status_map
 
 
-def build_salesforce_limit_map(sf_current_df):
-    """
-    Build dictionary of valid current credit limits by ERP customer code.
-
-    Logic:
-    - ERP > 700000
-    - ERP < 999999
-    - Status is not Bloqueado
-    - Status is not Expirado
-    - Sum Limite Aprovado by ERP customer code
-    """
+def build_salesforce_limit_map(
+    sf_current_df,
+):
     limit_map = {}
 
     if sf_current_df.empty:
         return limit_map
 
     for _, row in sf_current_df.iterrows():
-        erp_customer_code = normalize_erp_code(row.get("Código ERP", ""))
-        credit_limit = to_number(row.get("Limite Aprovado", 0), default=0.0)
-        limit_status = str(row.get("Status do Limite", "")).strip()
+        erp_customer_code = normalize_erp_code(
+            row.get(
+                "Código ERP",
+                "",
+            )
+        )
+
+        credit_limit = to_number(
+            row.get(
+                "Limite Aprovado",
+                0,
+            ),
+            default=0.0,
+        )
+
+        limit_status = str(
+            row.get(
+                "Status do Limite",
+                "",
+            )
+        ).strip()
 
         if erp_customer_code == "":
             continue
 
-        erp_numeric = to_number(erp_customer_code, default=0.0)
+        erp_numeric = to_number(
+            erp_customer_code,
+            default=0.0,
+        )
 
-        if erp_numeric <= 700000 or erp_numeric >= 999999:
+        if (
+            erp_numeric <= 700000
+            or erp_numeric >= 999999
+        ):
             continue
 
-        if limit_status.upper() in ["BLOQUEADO", "EXPIRADO"]:
+        if limit_status.upper() in [
+            "BLOQUEADO",
+            "EXPIRADO",
+        ]:
             continue
 
-        if erp_customer_code not in limit_map:
-            limit_map[erp_customer_code] = credit_limit
+        if (
+            erp_customer_code
+            not in limit_map
+        ):
+            limit_map[
+                erp_customer_code
+            ] = credit_limit
+
         else:
-            limit_map[erp_customer_code] += credit_limit
+            limit_map[
+                erp_customer_code
+            ] += credit_limit
 
     return limit_map
 
 
 def build_due120_set(sf_due120_df):
-    """
-    Build set of customers with credit limits due within 120 days.
-    """
     due120_set = set()
 
     if sf_due120_df.empty:
         return due120_set
 
     for _, row in sf_due120_df.iterrows():
-        erp_customer_code = normalize_erp_code(row.get("Código ERP", ""))
+        erp_customer_code = normalize_erp_code(
+            row.get(
+                "Código ERP",
+                "",
+            )
+        )
 
         if erp_customer_code != "":
-            due120_set.add(erp_customer_code)
+            due120_set.add(
+                erp_customer_code
+            )
 
     return due120_set
 
 
-def validate_ztfi_files_by_companies(ztfi_files, companies_value):
-    """
-    Validate that at least one ZTFI file exists for each requested company.
-
-    This validation is only applied when COMPANIES is not ALL.
-    """
-    companies = parse_companies(companies_value)
+def validate_ztfi_files_by_companies(
+    ztfi_files,
+    companies_value,
+):
+    companies = parse_companies(
+        companies_value
+    )
 
     if len(companies) == 0:
         return {
@@ -1388,7 +1661,9 @@ def validate_ztfi_files_by_companies(ztfi_files, companies_value):
         file_name = file_path.name
 
         for company in companies:
-            short_company = str(int(company))
+            short_company = str(
+                int(company)
+            )
 
             patterns = [
                 f"_{company}_",
@@ -1397,7 +1672,9 @@ def validate_ztfi_files_by_companies(ztfi_files, companies_value):
 
             for pattern in patterns:
                 if pattern in file_name:
-                    found_companies.add(company)
+                    found_companies.add(
+                        company
+                    )
 
     missing_companies = [
         company
@@ -1406,54 +1683,61 @@ def validate_ztfi_files_by_companies(ztfi_files, companies_value):
     ]
 
     return {
-        "status": "OK" if len(missing_companies) == 0 else "REVIEW REQUIRED",
-        "missing_companies": missing_companies,
+        "status": (
+            "OK"
+            if len(missing_companies) == 0
+            else "REVIEW REQUIRED"
+        ),
+        "missing_companies": (
+            missing_companies
+        ),
     }
 
 
 def load_ar_input_data(context):
-    """
-    Load common AR input data.
-
-    This function reads:
-    - ZTFI098 files
-    - Customer file
-    - Salesforce current credit limits
-    - Salesforce due 120 file
-    - SAP FX Rates file from SQVI / TCURR
-
-    Intercompany exclusions are loaded from:
-    - core/intercompanies.py
-
-    File discovery uses the module TO date as YYYYMMDD suffix.
-
-    Example:
-    TO = 2026-02-28
-    period_suffix = 20260228
-    """
     input_folder = context["input_folder"]
     module_config = context["module"]
 
-    period_suffix = get_period_suffix(module_config)
+    period_suffix = get_period_suffix(
+        module_config
+    )
 
     ztfi_files = find_all_files_containing_all(
         input_folder,
-        ["ZTFI098", period_suffix],
+        [
+            "ZTFI098",
+            period_suffix,
+        ],
     )
 
-    customer_file = find_first_file_containing_all(
-        input_folder,
-        ["LBR Customer", period_suffix],
+    customer_file = (
+        find_first_file_containing_all(
+            input_folder,
+            [
+                "LBR Customer",
+                period_suffix,
+            ],
+        )
     )
 
-    sf_current_file = find_first_file_containing_all(
-        input_folder,
-        ["Customer_credit_limits_curr", period_suffix],
+    sf_current_file = (
+        find_first_file_containing_all(
+            input_folder,
+            [
+                "Customer_credit_limits_curr",
+                period_suffix,
+            ],
+        )
     )
 
-    sf_due120_file = find_first_file_containing_all(
-        input_folder,
-        ["Credit_limits_due_120", period_suffix],
+    sf_due120_file = (
+        find_first_file_containing_all(
+            input_folder,
+            [
+                "Credit_limits_due_120",
+                period_suffix,
+            ],
+        )
     )
 
     fx_rates_file = find_fx_rates_file(
@@ -1464,156 +1748,196 @@ def load_ar_input_data(context):
     intercompany_file = None
 
     if len(ztfi_files) == 0:
-        raise FileNotFoundError(f"No ZTFI098 files were found for period {period_suffix}.")
+        raise FileNotFoundError(
+            "No ZTFI098 files were found "
+            f"for period {period_suffix}."
+        )
 
     if customer_file is None:
-        raise FileNotFoundError(f"Customer file was not found for period {period_suffix}.")
+        raise FileNotFoundError(
+            "Customer file was not found "
+            f"for period {period_suffix}."
+        )
 
     if sf_current_file is None:
         raise FileNotFoundError(
-            f"Salesforce current credit limits file was not found for period {period_suffix}."
+            "Salesforce current credit limits "
+            "file was not found for period "
+            f"{period_suffix}."
         )
 
     if sf_due120_file is None:
         raise FileNotFoundError(
-            f"Salesforce due 120 file was not found for period {period_suffix}."
+            "Salesforce due 120 file was not "
+            f"found for period {period_suffix}."
         )
 
     if fx_rates_file is None:
         raise FileNotFoundError(
-            f"SAP FX Rates file was not found for period {period_suffix}. "
-            f"Expected file name like: FxRates_{period_suffix}.xlsx"
+            "SAP FX Rates file was not found "
+            f"for period {period_suffix}. "
+            "Expected file name like: "
+            f"FxRates_{period_suffix}.xlsx"
         )
 
-    ztfi_file_company_validation = validate_ztfi_files_by_companies(
-        ztfi_files,
-        module_config.get("companies", "ALL"),
+    ztfi_file_company_validation = (
+        validate_ztfi_files_by_companies(
+            ztfi_files,
+            module_config.get(
+                "companies",
+                "ALL",
+            ),
+        )
     )
 
-    ztfi_df_raw = combine_files(ztfi_files)
+    ztfi_df_raw = combine_files(
+        ztfi_files
+    )
 
     ztfi_df = filter_dataframe_by_companies(
         ztfi_df_raw,
         "Empresa",
-        module_config.get("companies", "ALL"),
+        module_config.get(
+            "companies",
+            "ALL",
+        ),
     )
 
-    customer_df = read_table_file(customer_file)
+    customer_df = read_table_file(
+        customer_file
+    )
+
+    customer_df = (
+        normalize_customer_master_columns(
+            customer_df
+        )
+    )
 
     intercompany_df = pd.DataFrame()
 
-    sf_current = read_salesforce_file(sf_current_file)
-    sf_due120 = read_salesforce_file(sf_due120_file)
-
-    fx_rate_details = get_fx_rate_from_sap_export(
-        fx_rates_file,
-        module_config,
-        currency="BRL",
-        requested_rate_type="spot_bs",
-        allow_previous_date=True,
-        max_previous_days=10,
-        allow_tcot_fallback=True,
-        allow_future_date=False,
+    sf_current = read_salesforce_file(
+        sf_current_file
     )
 
-    fx_rate_brl_to_usd = fx_rate_details["final_fx_rate"]
+    sf_due120 = read_salesforce_file(
+        sf_due120_file
+    )
+
+    fx_rate_details = (
+        get_fx_rate_from_sap_export(
+            fx_rates_file,
+            module_config,
+            currency="BRL",
+            requested_rate_type="spot_bs",
+            allow_previous_date=True,
+            max_previous_days=10,
+            allow_tcot_fallback=True,
+            allow_future_date=False,
+        )
+    )
+
+    fx_rate_brl_to_usd = (
+        fx_rate_details["final_fx_rate"]
+    )
 
     return {
         "period_suffix": period_suffix,
         "ztfi_files": ztfi_files,
         "customer_file": customer_file,
-        "intercompany_file": intercompany_file,
-        "intercompany_source": "core/intercompanies.py",
+        "intercompany_file": (
+            intercompany_file
+        ),
+        "intercompany_source": (
+            "core/intercompanies.py"
+        ),
         "sf_current_file": sf_current_file,
         "sf_due120_file": sf_due120_file,
-
-        # New SAP FX source.
         "fx_rates_file": fx_rates_file,
         "fx_rate_details": fx_rate_details,
-
-        # Compatibility key in case AR_001 prints or references old name.
-        "exchange_rates_file": fx_rates_file,
-
-        "ztfi_file_company_validation": ztfi_file_company_validation,
-        "ztfi_companies": get_companies_summary(ztfi_df, "Empresa"),
+        "exchange_rates_file": (
+            fx_rates_file
+        ),
+        "ztfi_file_company_validation": (
+            ztfi_file_company_validation
+        ),
+        "ztfi_companies": (
+            get_companies_summary(
+                ztfi_df,
+                "Empresa",
+            )
+        ),
         "ztfi_raw": ztfi_df_raw,
         "ztfi": ztfi_df,
         "customer": customer_df,
         "intercompany": intercompany_df,
-        "salesforce_current": sf_current["dataframe"],
-        "salesforce_due120": sf_due120["dataframe"],
-        "salesforce_current_header_row": sf_current["header_row_excel"],
-        "salesforce_due120_header_row": sf_due120["header_row_excel"],
-        "fx_rate_brl_to_usd": fx_rate_brl_to_usd,
+        "salesforce_current": (
+            sf_current["dataframe"]
+        ),
+        "salesforce_due120": (
+            sf_due120["dataframe"]
+        ),
+        "salesforce_current_header_row": (
+            sf_current["header_row_excel"]
+        ),
+        "salesforce_due120_header_row": (
+            sf_due120["header_row_excel"]
+        ),
+        "fx_rate_brl_to_usd": (
+            fx_rate_brl_to_usd
+        ),
     }
 
-
-# ============================================================
-# AR output workbook helpers
-# ============================================================
 
 from openpyxl import Workbook, load_workbook
 
 
 def get_ar_output_file(context):
-    """
-    Return final AR output file path.
-
-    All AR controls write to the same workbook:
-        output/LBR_Results_AR_YYYYMMDD.xlsx
-
-    The YYYYMMDD suffix is based on the module TO date.
-    """
-
     output_folder = context["output_folder"]
     module_config = context["module"]
 
-    period_suffix = get_period_suffix(module_config)
+    period_suffix = get_period_suffix(
+        module_config
+    )
 
-    return output_folder / f"LBR_Results_AR_{period_suffix}.xlsx"
+    return (
+        output_folder
+        / f"LBR_Results_AR_{period_suffix}.xlsx"
+    )
 
 
-def open_or_create_ar_output_workbook(output_file):
-    """
-    Open the final AR output workbook if it exists.
-    Otherwise create a new workbook.
-
-    This allows every AR control to run independently.
-    """
-
+def open_or_create_ar_output_workbook(
+    output_file,
+):
     if output_file.exists():
         return load_workbook(output_file)
 
     workbook = Workbook()
-
     default_sheet = workbook.active
+
     workbook.remove(default_sheet)
 
     return workbook
 
 
-def recreate_ar_sheet(workbook, sheet_name):
-    """
-    Recreate a single AR sheet in the final workbook.
-
-    Rules:
-    - If the target sheet exists, delete only that sheet.
-    - Do not delete sheets from other AR controls.
-    - Create the requested sheet at the end of the workbook.
-    """
-
+def recreate_ar_sheet(
+    workbook,
+    sheet_name,
+):
     if sheet_name in workbook.sheetnames:
         del workbook[sheet_name]
 
-    return workbook.create_sheet(sheet_name)
+    return workbook.create_sheet(
+        sheet_name
+    )
 
 
-def save_ar_output_workbook(workbook, output_file):
-    """
-    Save the final AR workbook.
+def save_ar_output_workbook(
+    workbook,
+    output_file,
+):
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    Ensures output folder exists before saving.
-    """
-
-    output_file.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_file)

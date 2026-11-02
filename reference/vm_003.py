@@ -443,83 +443,8 @@ def build_vm_003(
     )
 
 
-def run_vm_003(
-    context: dict[str, Any],
-) -> dict[str, Any]:
-    """Execute VM03 and replace only the VM03 result worksheet."""
-    total_started = perf_counter()
-    stage_started = total_started
-
-    population, load_metrics = _load_population(context)
-    loaded_at = perf_counter()
-    load_seconds = loaded_at - stage_started
-
-    stage_started = loaded_at
-    # Population preparation is already completed by the common builders.
-    prepared_at = perf_counter()
-    preparation_seconds = prepared_at - stage_started
-
-    stage_started = prepared_at
-    output, analytic_metrics = build_vm_003(population)
-    analytic_at = perf_counter()
-    analytic_seconds = analytic_at - stage_started
-
-    # Phone normalization is included in analytic_seconds and performs no
-    # additional pass solely for timing.
-    normalization_seconds = analytic_seconds
-
-    fx_seconds = 0.0
-
-    stage_started = analytic_at
-    output_file = write_vm_control_sheet(
-        context=context,
-        sheet_name=SHEET_NAME,
-        dataframe=output,
-        date_columns=["Last Transaction Date"],
-        amount_columns=["Last Inv Amt Doc Currency"],
-        integer_columns=["Group"],
-    )
-    finished = perf_counter()
-    write_seconds = finished - stage_started
-
-    print(f"{CONTROL_ID} source vendor rows: {load_metrics['source_rows']}")
-    print(f"{CONTROL_ID} master vendor rows: {load_metrics['master_rows']}")
-    print(f"{CONTROL_ID} valid vendor rows: {load_metrics['valid_rows']}")
-    print(f"{CONTROL_ID} posting rows: {load_metrics['posting_rows']}")
-    print(
-        f"{CONTROL_ID} RE/KR invoice posting rows: "
-        f"{load_metrics['invoice_posting_rows']}"
-    )
-    print(
-        f"{CONTROL_ID} vendors with last invoice: "
-        f"{load_metrics['vendors_with_last_invoice']}"
-    )
-    print(
-        f"{CONTROL_ID} rows with nonblank normalized phone: "
-        f"{analytic_metrics['nonblank_phone_rows']}"
-    )
-    print(f"{CONTROL_ID} exception rows: {analytic_metrics['exception_rows']}")
-    print(f"{CONTROL_ID} groups: {analytic_metrics['groups']}")
-    print(
-        f"{CONTROL_ID} duplicate CoCo/Vendor rows: "
-        f"{analytic_metrics['duplicate_output_rows']}"
-    )
-    print(
-        f"{CONTROL_ID} timings: "
-        f"load={load_seconds:.2f}s, "
-        f"preparation={preparation_seconds:.2f}s, "
-        f"phone_normalization_and_analytic={normalization_seconds:.2f}s, "
-        f"FX={fx_seconds:.2f}s, "
-        f"write={write_seconds:.2f}s, "
-        f"total={finished - total_started:.2f}s"
-    )
-
-    for warning in load_metrics["warnings"]:
-        print(f"WARNING: {warning}")
-
-    return {
-        "status": "ERROR" if not output.empty else "OK",
-        "output_file": output_file,
-        "sheet_name": SHEET_NAME,
-        "rows": len(output),
-    }
+def run_vm_003(context):
+    """Execute VM03 through the common configurable matching engine."""
+    # VM03_SHARED_MATCHING_V1
+    from core.vm_common import run_configured_vm
+    return run_configured_vm(context, sheet_name="VM03")

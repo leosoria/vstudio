@@ -120,6 +120,39 @@ def _normalized_vendor_keys(
     }
 
 
+
+# VM15_ZERO_BANK_ACCOUNT_V1
+def _bank_keys_without_zero_accounts(vendor_bank_population):
+    """
+    Return bank-presence keys, excluding identities that have at least one
+    account composed only of zeros. This reports those identities in VM15.
+    """
+    if "Bank Account" not in vendor_bank_population.columns:
+        raise ValueError(
+            f"{CONTROL_ID}: missing Bank Account in bank population."
+        )
+
+    bank_keys = _normalized_vendor_keys(vendor_bank_population)
+    zero_keys = set()
+
+    for company, vendor, account in vendor_bank_population[
+        ["Company", "Vendor Code", "Bank Account"]
+    ].itertuples(index=False, name=None):
+        value = safe_text(account).upper()
+        # Preserve alphanumeric characters; remove separators such as "-".
+        normalized = "".join(
+            character for character in value if character.isalnum()
+        )
+
+        if normalized and set(normalized) == {"0"}:
+            company = normalize_company(company)
+            vendor = normalize_vendor_code(vendor)
+            if company and vendor:
+                zero_keys.add((company, vendor))
+
+    return bank_keys - zero_keys
+
+
 def build_vm_015(
     vendor_population: pd.DataFrame,
     vendor_bank_population: pd.DataFrame,
@@ -164,7 +197,7 @@ def build_vm_015(
     vendors["Company"] = vendors["Company Name"].map(safe_text)
     vendors["Vendor Name"] = vendors["Vendor Name"].map(safe_text)
 
-    bank_keys = _normalized_vendor_keys(vendor_bank_population)
+    bank_keys = _bank_keys_without_zero_accounts(vendor_bank_population)
 
     vendor_keys = pd.Series(
         list(zip(vendors["CoCo"], vendors["Vendor Code"])),
@@ -195,6 +228,52 @@ def build_vm_015(
         .loc[:, OUTPUT_COLUMNS]
         .reset_index(drop=True)
     )
+
+
+
+# VM15_ACTIVE_SUPPLIERS_V1
+def _vm15_filter_active_suppliers(vendor_population, source_columns):
+    """Apply active-status rules and remove employee F-codes."""
+    from core.vm_common import filter_active_records
+
+    required = {
+        "Vendor Code",
+        "Central Deletion Flag",
+        "Company Deletion Flag",
+        "Central Posting Block",
+        "Purchasing Block",
+        "Central Payment Block",
+    }
+
+    missing_population = sorted(required - set(vendor_population.columns))
+    missing_source = sorted(required - set(source_columns))
+
+    if missing_population or missing_source:
+        raise ValueError(
+            f"{CONTROL_ID}: active-filter fields missing. "
+            f"Population: {missing_population}; source: {missing_source}"
+        )
+
+    active, active_metrics = filter_active_records(vendor_population)
+
+    f_codes = active["Vendor Code"].map(
+        normalize_vendor_code
+    ).str.startswith("F", na=False)
+
+    excluded_f = int(f_codes.sum())
+    active = active.loc[~f_codes].copy().reset_index(drop=True)
+
+    print(
+        f"{CONTROL_ID} rows excluded by active-status rule: "
+        f"{active_metrics['excluded_rows']}"
+    )
+    print(
+        f"{CONTROL_ID} F-code rows excluded from suppliers: "
+        f"{excluded_f}"
+    )
+    print(f"{CONTROL_ID} active supplier rows: {len(active)}")
+
+    return active
 
 
 def run_vm_015(
@@ -234,6 +313,12 @@ def run_vm_015(
         filtered_master
     )
 
+    valid_population = _vm15_filter_active_suppliers(
+        valid_population,
+        vendor_source.attrs.get("vm_source_columns", ()),
+    )
+
+
     if valid_population.empty:
         raise ValueError(
             "VM_015: valid vendor population is empty after CONFIG "
@@ -251,7 +336,7 @@ def run_vm_015(
     )
 
     valid_keys = _normalized_vendor_keys(valid_population)
-    bank_keys = _normalized_vendor_keys(vendor_bank_population)
+    bank_keys = _bank_keys_without_zero_accounts(vendor_bank_population)
 
     valid_with_bank = len(
         valid_keys.intersection(bank_keys)

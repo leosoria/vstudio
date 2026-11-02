@@ -37,6 +37,7 @@ from core.fam_common import (
     get_fam_output_file,
     load_fam_ar01_data,
     load_fx_rates_data,
+    normalize_fam_support_columns as normalize_common_fam_support_columns,
     normalize_text,
     open_or_create_fam_output_workbook,
     parse_number,
@@ -249,7 +250,7 @@ def normalize_sheet_lookup_name(value):
 
 
 def fiscal_year(year, month):
-    """Return LHA fiscal year number where FY runs from March to February."""
+    """Return fiscal year number where FY runs from March to February."""
     return (year + 1 if month >= 3 else year) % 100
 
 
@@ -270,7 +271,7 @@ def get_company_aliases(company_code):
 
 
 def parse_reporting_pack_filename(file_path):
-    """Parse Reporting Pack filename using the LHA debug_rp selection concepts."""
+    """Parse Reporting Pack filename using the debug_rp selection concepts."""
     normalized_name = normalize_lookup_text(file_path.stem)
     tokens = normalized_name.split()
 
@@ -423,7 +424,7 @@ def numeric_cell_value(worksheet, row_number, column_number):
 def find_reporting_pack_file(context, company_code, date_to):
     """Find the Reporting Pack workbook for company and period.
 
-    This follows the LHA FAM debug_rp.py approach: parse Reporting Pack
+    This follows the FAM debug_rp.py approach: parse Reporting Pack
     filenames, match by company alias, fiscal year and fiscal month coverage
     instead of relying on a simple company-code substring.
     """
@@ -625,7 +626,13 @@ def find_fam04_support_file(context, keyword):
 
 
 def read_optional_support_file(context, keyword):
-    """Read an optional FAM04 SQVI support workbook if it exists."""
+    """
+    Read an optional FAM04 SQVI support workbook if it exists.
+
+    BAL and MOV headers are normalized centrally by core.fam_common.
+    The normalizer accepts the current English SAP export headers,
+    the previous Portuguese/Spanish headers, and SAP technical names.
+    """
     support_file = find_fam04_support_file(context, keyword)
 
     if support_file is None:
@@ -635,7 +642,7 @@ def read_optional_support_file(context, keyword):
     dataframe = pd.read_excel(support_file)
     dataframe = dataframe.dropna(axis=0, how="all")
     dataframe = dataframe.dropna(axis=1, how="all")
-    dataframe = normalize_support_columns(dataframe)
+    dataframe = normalize_common_fam_support_columns(dataframe)
 
     print(f"FAM_004 support file {keyword}: {support_file}")
     print(f"FAM_004 support file {keyword} rows loaded: {len(dataframe)}")

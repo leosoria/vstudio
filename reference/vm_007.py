@@ -67,7 +67,44 @@ SHEET_NAME = "VM07"
 
 # This value is used only when PARAM1 is blank.
 # Configure PARAM1=3 in config.xlsx for the requested threshold.
-DEFAULT_MINIMUM_CHANGES = 2
+DEFAULT_MINIMUM_CHANGES = 3
+PATCH_VERSION = "VM07_AUDIT_PATCH_20261008"
+
+# VM07_DESCRIPTIONS_V1
+_FIELD_DESCRIPTIONS = {
+    "BANKS": "Pais del banco",
+    "BANKL": "Codigo del banco",
+    "BANKN": "Numero de cuenta bancaria",
+    "BKONT": "Clave de control bancario",
+    "BKREF": "Referencia bancaria",
+    "BVTYP": "Identificador del registro bancario",
+    "KOINH": "Nombre del titular de la cuenta",
+    "KOVON": "Fecha de inicio de vigencia bancaria",
+    "KOBIS": "Fecha de fin de vigencia bancaria",
+    "XEZER": "Indicador de autorizacion de debito directo",
+}
+
+_TYPE_DESCRIPTIONS = {
+    "U": "Modificacion",
+    "I": "Alta de registro",
+    "J": "Alta de registro con detalle por campo",
+    "D": "Eliminacion de registro",
+    "E": "Eliminacion de registro con detalle por campo",
+}
+
+def _field_description(value):
+    code = normalize_upper_text(value)
+    return _FIELD_DESCRIPTIONS.get(
+        code, "Descripcion no disponible"
+    )
+
+def _type_description(value):
+    code = normalize_upper_text(value)
+    return _TYPE_DESCRIPTIONS.get(
+        code, "Tipo no identificado"
+    )
+
+
 
 OUTPUT_COLUMNS = [
     "Company",
@@ -82,7 +119,9 @@ OUTPUT_COLUMNS = [
     "Change Document",
     "Changed Record Key",
     "Changed Field",
+    "Changed Field Description",
     "Change Type",
+    "Change Type Description",
     "Old Value",
     "New Value",
 ]
@@ -124,7 +163,7 @@ def _minimum_changes(
     """
     Return the minimum number of distinct bank-change events.
 
-    PARAM1 must be a positive whole number. A blank PARAM1 uses
+    PARAM1 must be a whole number of at least 3. A blank PARAM1 uses
     DEFAULT_MINIMUM_CHANGES.
     """
     control_config = context.get(
@@ -169,16 +208,16 @@ def _minimum_changes(
         ValueError,
     ) as error:
         raise ValueError(
-            f"{CONTROL_ID} PARAM1 must be a positive whole number; "
+            f"{CONTROL_ID} PARAM1 must be a whole number of at least 3; "
             f"received {raw_value!r}."
         ) from error
 
     if (
         numeric_value != threshold
-        or threshold < 1
+        or threshold < 3
     ):
         raise ValueError(
-            f"{CONTROL_ID} PARAM1 must be a positive whole number; "
+            f"{CONTROL_ID} PARAM1 must be a whole number of at least 3; "
             f"received {raw_value!r}."
         )
 
@@ -329,6 +368,44 @@ def _load_valid_vendor_population(
         )
     )
 
+    # Local ACTIVE rule: preserves all existing common exclusions.
+    status_fields = {
+        "Central Deletion Flag": "LOEVM",
+        "Payment Block": "ZAHLS",
+        "Central Posting Block": "SPERR",
+        "Purchasing Block": "SPERM",
+        "Central Payment Block": "SPERZ",
+    }
+
+    missing = sorted(set(status_fields).difference(valid_population.columns))
+    if missing:
+        raise ValueError(f"{CONTROL_ID}: missing status fields: {missing}")
+
+    excluded_status = pd.Series(False, index=valid_population.index)
+
+    for field, sap_field in status_fields.items():
+        flagged = valid_population[field].map(normalize_upper_text).eq("X")
+        print(
+            f"{CONTROL_ID} supplier rows with {sap_field}=X: "
+            f"{int(flagged.sum())}"
+        )
+        excluded_status |= flagged
+
+    population_metrics["excluded_local_status"] = int(excluded_status.sum())
+
+    valid_population = (
+        valid_population.loc[~excluded_status]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    population_metrics["output_rows"] = len(valid_population)
+
+    print(
+        f"{CONTROL_ID} supplier rows excluded by ACTIVE rule: "
+        f"{int(excluded_status.sum())}"
+    )
+
     metrics = {
         "source_rows": len(
             vendor_source
@@ -342,6 +419,28 @@ def _load_valid_vendor_population(
         "excluded_company": excluded_company,
         **population_metrics,
     }
+
+
+    # VM07_EXCLUDE_F_SUPPLIERS_V1
+    # Employee F-codes must never be treated as suppliers.
+    employee_f_code = valid_population["Vendor Code"].map(
+        normalize_vendor_code
+    ).str.startswith("F", na=False)
+
+    excluded_f_codes = int(employee_f_code.sum())
+    valid_population = (
+        valid_population.loc[~employee_f_code]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    metrics["excluded_f_codes_from_suppliers"] = excluded_f_codes
+    metrics["output_rows"] = len(valid_population)
+
+    print(
+        f"{CONTROL_ID} F-code supplier rows excluded: "
+        f"{excluded_f_codes}"
+    )
 
     return (
         valid_population,
@@ -533,9 +632,9 @@ def _summarize_vendor_changes(
     Multiple changed fields belonging to one Change Event Key count as one
     event. Only vendors meeting or exceeding PARAM1 are returned.
     """
-    if minimum_changes < 1:
+    if minimum_changes < 3:
         raise ValueError(
-            f"{CONTROL_ID}: minimum_changes must be at least 1."
+            f"{CONTROL_ID}: minimum_changes must be at least 3."
         )
 
     if change_details.empty:
@@ -720,9 +819,9 @@ def build_vm_007(
         vendor_population,
     )
 
-    if minimum_changes < 1:
+    if minimum_changes < 3:
         raise ValueError(
-            f"{CONTROL_ID}: minimum_changes must be at least 1."
+            f"{CONTROL_ID}: minimum_changes must be at least 3."
         )
 
     if (
@@ -777,6 +876,13 @@ def build_vm_007(
             columns=OUTPUT_COLUMNS
         )
 
+    result["Changed Field Description"] = (
+        result["Changed Field"].map(_field_description)
+    )
+    result["Change Type Description"] = (
+        result["Change Type"].map(_type_description)
+    )
+
     result["Cambios"] = pd.to_numeric(
         result["Cambios"],
         errors="raise",
@@ -821,6 +927,12 @@ def run_vm_007(
 ) -> dict[str, Any]:
     """Execute VM07 and replace only the VM07 result worksheet."""
     started = perf_counter()
+
+    print(f"{CONTROL_ID} patch: {PATCH_VERSION}; script: {__file__}")
+    print(
+        f"{CONTROL_ID} raw PARAM1: "
+        f"{context.get('control', {}).get('param1', '')!r}"
+    )
 
     threshold = _minimum_changes(
         context

@@ -1913,3 +1913,168 @@ def _sdp_write_control_sheet(context, sheet_name, dataframe, date_columns=None, 
             temporary_path.unlink()
     return output_file
 # SD_PURCHASING_UTILITIES_END
+
+
+# Shared display-name enrichment for SD controls.
+from pathlib import Path as _sdnames_Path
+from decimal import Decimal as _sdnames_Decimal, InvalidOperation as _sdnames_InvalidOperation
+import hashlib as _sdnames_hashlib
+import unicodedata as _sdnames_unicodedata
+import pandas as _sdnames_pd
+from openpyxl import load_workbook as _sdnames_load_workbook
+
+def _sdnames_text(value):
+    if value is None:
+        return ''
+    try:
+        if _sdnames_pd.isna(value):
+            return ''
+    except (TypeError, ValueError):
+        pass
+    return ' '.join(str(value).strip().split())
+
+def _sdnames_label(value):
+    value = _sdnames_unicodedata.normalize('NFKD', _sdnames_text(value))
+    return ''.join((c.lower() for c in value if c.isalnum()))
+
+def _sdnames_identifier(value, width):
+    value = _sdnames_text(value)
+    if not value:
+        return ''
+    try:
+        number = _sdnames_Decimal(value)
+        if number.is_finite() and number == number.to_integral_value():
+            value = str(int(number))
+    except _sdnames_InvalidOperation:
+        pass
+    if value.isdigit():
+        return '' if int(value) == 0 else value.zfill(width)
+    return value.upper()
+
+def _sdnames_hash(path):
+    result = _sdnames_hashlib.sha256()
+    with path.open('rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            result.update(block)
+    return result.hexdigest()
+
+def _sdnames_find(context, family):
+    suffix = get_period_suffix(context['module'])
+    expected = _sdnames_label(f'LBR SD {family} {suffix}')
+    folder = _sdnames_Path(context['input_folder'])
+    matches = sorted((path for path in folder.rglob('*') if path.is_file() and (not path.name.startswith('~$')) and (path.suffix.lower() in {'.xlsx', '.xlsm'}) and (_sdnames_label(path.stem) == expected)))
+    if not matches:
+        raise FileNotFoundError(f'SD names: missing LBR SD_{family}_{suffix}.xlsx')
+    if len(matches) > 1:
+        hashes = {_sdnames_hash(path) for path in matches}
+        if len(hashes) != 1:
+            raise ValueError(f'SD names: multiple different copies of SD_{family}: ' + '; '.join((str(path) for path in matches)))
+        print(f'SD names - {family}: {len(matches)} identical copies; one copy used. Keep only one active copy for other loaders.')
+    chosen = sorted(matches, key=lambda path: (path.parent.name.casefold() != 'sd', str(path).casefold()))[0]
+    print('SD names - Source:', chosen)
+    return chosen
+
+def _sdnames_read(path):
+    book = _sdnames_load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows = book.worksheets[0].iter_rows(values_only=True)
+        first = next(rows, None)
+        if first is None:
+            raise ValueError('SD names: empty source ' + path.name)
+        headers = [_sdnames_label(value) for value in first]
+        for row_number, values in enumerate(rows, 2):
+            if any((_sdnames_text(value) for value in values)):
+                yield (headers, values, row_number)
+    finally:
+        book.close()
+
+def _sdnames_get(headers, values, *names, optional=False):
+    wanted = {_sdnames_label(name) for name in names}
+    indexes = [index for index, name in enumerate(headers) if name in wanted]
+    if not indexes:
+        if optional:
+            return ''
+        raise ValueError('SD names: missing source column ' + repr(names))
+    index = indexes[0]
+    return values[index] if index < len(values) else ''
+
+def _sdnames_vendor_names(context):
+    path = _sdnames_find(context, 'VENDOR')
+    names = {}
+    for headers, values, row_number in _sdnames_read(path):
+        company = _sdnames_identifier(_sdnames_get(headers, values, 'CoCd', 'Company Code', 'Company'), 4)
+        vendor = _sdnames_identifier(_sdnames_get(headers, values, 'Vendor', 'Vendor Code'), 10)
+        name = _sdnames_text(_sdnames_get(headers, values, 'Name 1', 'Vendor Name'))
+        if not company and (not vendor):
+            continue
+        if not company or not vendor:
+            raise ValueError(f'SD names: incomplete vendor key in {path.name}, row {row_number}')
+        key = (company, vendor)
+        previous = names.get(key, '')
+        if previous and name and (previous.casefold() != name.casefold()):
+            raise ValueError('SD names: contradictory vendor names for ' + repr(key))
+        if name:
+            names[key] = previous or name
+    return names
+
+def _sdnames_user_names(context):
+    path = _sdnames_find(context, 'USERS')
+    names = {}
+    other_versions = 0
+    for headers, values, row_number in _sdnames_read(path):
+        user = _sdnames_text(_sdnames_get(headers, values, 'User Name', 'BNAME', 'User ID')).upper()
+        if not user:
+            continue
+        version = _sdnames_text(_sdnames_get(headers, values, 'Version', 'NATION', optional=True))
+        if version:
+            other_versions += 1
+            continue
+        name = _sdnames_text(_sdnames_get(headers, values, 'Full Name', 'NAME_TEXT', optional=True))
+        if not name:
+            first = _sdnames_text(_sdnames_get(headers, values, 'First name', 'NAME_FIRST', optional=True))
+            last = _sdnames_text(_sdnames_get(headers, values, 'Last name', 'NAME_LAST', optional=True))
+            name = ' '.join((part for part in (first, last) if part))
+        if not name:
+            continue
+        previous = names.get(user, '')
+        if previous and previous.casefold() != name.casefold():
+            raise ValueError('SD names: multiple distinct standard-version names for ' + user + '. Review the source; no name was selected automatically.')
+        names[user] = previous or name
+    print('SD names - Users with standard-version name:', len(names))
+    print('SD names - Nonstandard-version rows excluded:', other_versions)
+    print('SD names - Names reflect the supplied user master; historical identity at the transaction date is not established.')
+    return names
+
+def enrich_sd_names(context, frame, user_columns):
+    """Populate names by keys without merging, duplicating or filtering rows."""
+    required = {'Company', 'Vendor Code', *user_columns.keys()}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError('SD names: missing report columns ' + repr(sorted(missing)))
+    result = frame.copy()
+    added = {'Vendor Name', *user_columns.values()}
+    original_columns = [column for column in frame.columns if column not in added]
+    if not result.empty:
+        vendors = _sdnames_vendor_names(context)
+        users = _sdnames_user_names(context)
+    else:
+        vendors, users = ({}, {})
+    vendor_keys = [(_sdnames_identifier(company, 4), _sdnames_identifier(vendor, 10)) for company, vendor in zip(result['Company'], result['Vendor Code'])]
+    result['Vendor Name'] = [vendors.get(key, '') if key[1] else '' for key in vendor_keys]
+    missing_vendors = sorted({key for key in vendor_keys if key[1] and (not vendors.get(key))})
+    print('SD names - Vendor positions with name:', int(result['Vendor Name'].ne('').sum()))
+    print('SD names - Vendor keys without name:', len(missing_vendors))
+    for key in missing_vendors[:20]:
+        print('SD names - Missing vendor:', '|'.join(key))
+    for source, target in user_columns.items():
+        ids = result[source].map(lambda value: _sdnames_text(value).upper())
+        result[target] = ids.map(lambda value: users.get(value, ''))
+        missing_users = sorted({value for value in ids if value and (not users.get(value))})
+        print(f"SD names - {target}: {int(result[target].ne('').sum())} positions with name; {len(missing_users)} IDs without name")
+        if missing_users:
+            print('SD names - Missing user IDs:', ', '.join(missing_users[:30]))
+    if len(result) != len(frame):
+        raise ValueError('SD names: unexpected row count change')
+    if not result[original_columns].equals(frame[original_columns]):
+        raise ValueError('SD names: original report values changed')
+    return result

@@ -3,20 +3,23 @@ Common FAM utilities.
 
 This module contains reusable functions for Fixed Asset Management controls.
 
+Responsibilities:
+- Locate and read the shared LBR FAM AR input using the module TO date.
+- Accept LBR FAM AR_YYYYMMDD and LBR FAM_AR_YYYYMMDD filenames.
+- Normalize Portuguese or English fixed-asset headers.
+- Normalize BAL/MOV support headers to SAP technical field names.
+- Load FX rates and provide common output and formatting helpers.
+
 Design rules:
-- The FAM AR01 input file is resolved by code using:
-    input/LBR FAM AR_YYYYMMDD.xlsx
-- The FX rates input file is resolved by code using:
-    input/FxRates_YYYYMMDD.xlsx
-- YYYYMMDD comes from the FAM module TO date in config.xlsx.
-- The FAM input file name is not configured in PARAM1/PARAM2.
-- Every FAM control must be independent.
-- Every FAM control must write only its own sheet.
-- No FAM control must delete sheets from other controls.
-- The final FAM output workbook follows:
+- Every FAM control must remain independently executable.
+- Each control writes or replaces only its own output sheet.
+- Controls must preserve sheets produced by other FAM controls.
+- The shared output workbook is:
     output/LBR_Results_FAM_YYYYMMDD.xlsx
 """
 
+import re
+import unicodedata
 import warnings
 from pathlib import Path
 
@@ -39,6 +42,12 @@ warnings.filterwarnings(
 
 
 FAM_INPUT_PREFIX = "LBR FAM AR_"
+
+FAM_INPUT_PREFIXES = [
+    "LBR FAM AR_",
+    "LBR FAM_AR_",
+]
+
 FAM_INPUT_EXTENSION = ".xlsx"
 
 FX_INPUT_PREFIX = "FxRates_"
@@ -46,20 +55,232 @@ FX_INPUT_EXTENSION = ".xlsx"
 
 FAM_HEADER_FILL = "D9EAF7"
 FAM_DATE_FORMAT = "dd/mm/yyyy"
-FAM_AMOUNT_FORMAT = '#,##0.00'
-FAM_INTEGER_FORMAT = '#,##0'
+FAM_AMOUNT_FORMAT = "#,##0.00"
+FAM_INTEGER_FORMAT = "#,##0"
+
+
+FAM_AR_COLUMN_ALIASES = {
+    "Imobilizado": [
+        "Imobilizado",
+        "Asset",
+    ],
+    "Subnº": [
+        "Subnº",
+        "Subn°",
+        "Subno",
+        "Subnro",
+        "Subnumber",
+    ],
+    "Empresa": [
+        "Empresa",
+        "Company Code",
+    ],
+    "Denominação do imobilizado": [
+        "Denominação do imobilizado",
+        "Denominacao do imobilizado",
+        "Asset description",
+    ],
+    "Incorporação em": [
+        "Incorporação em",
+        "Incorporacao em",
+        "Capitalized on",
+    ],
+    "ValAquis.": [
+        "ValAquis.",
+        "ValAquis",
+        "Valor aquisição",
+        "Valor aquisicao",
+        "Acquis.val.",
+    ],
+    "Depreciação ac.": [
+        "Depreciação ac.",
+        "Depreciacao ac.",
+        "Depreciação acumulada",
+        "Depreciacao acumulada",
+        "Accum.dep.",
+    ],
+    "Valor contábil": [
+        "Valor contábil",
+        "Valor contabil",
+        "Book val.",
+    ],
+    "Classe imobilizado": [
+        "Classe imobilizado",
+        "Asset Class",
+    ],
+    "Moeda": [
+        "Moeda",
+        "Currency",
+    ],
+    "Divisão": [
+        "Divisão",
+        "Divisao",
+        "Business Area",
+    ],
+    "Item de balanço": [
+        "Item de balanço",
+        "Item de balanco",
+        "Balance sheet item",
+    ],
+    "Conta do balanço CAP": [
+        "Conta do balanço CAP",
+        "Conta do balanco CAP",
+        "Bal.sh.acct APC",
+    ],
+    "Depreciação normal": [
+        "Depreciação normal",
+        "Depreciacao normal",
+        "Ord.dep.start date",
+    ],
+}
+
+
+FAM_AR_REQUIRED_CANONICAL_COLUMNS = [
+    "Imobilizado",
+    "Subnº",
+    "Empresa",
+    "Denominação do imobilizado",
+    "Incorporação em",
+    "ValAquis.",
+    "Depreciação ac.",
+    "Valor contábil",
+    "Classe imobilizado",
+    "Moeda",
+]
+
+
+FAM_SUPPORT_COLUMN_ALIASES = {
+    "BUKRS": [
+        "BUKRS",
+        "EMPR",
+        "EMPRESA",
+        "COCD",
+    ],
+    "ANLN1": [
+        "ANLN1",
+        "IMOBILIZADO",
+        "ASSET",
+    ],
+    "ANLN2": [
+        "ANLN2",
+        "SBN",
+        "SUBNUMERO",
+        "SNO",
+    ],
+    "ANLKL": [
+        "ANLKL",
+        "CLASSE",
+        "CLASE",
+        "CLASS",
+    ],
+    "TXT50": [
+        "TXT50",
+        "DENOMINACAO DO IMOBILIZADO",
+        "DENOMINACION DEL ACTIVO FIJO",
+        "ASSET DESCRIPTION",
+    ],
+    "AFABE": [
+        "AFABE",
+        "AR",
+        "AREA",
+    ],
+    "GJAHR": [
+        "GJAHR",
+        "ANO",
+        "ANIO",
+        "EJERCICIO",
+        "YEAR",
+    ],
+    "KANSW": [
+        "KANSW",
+        "VAL AQUIS ACUM",
+        "VALOR AQUISICAO ACUM",
+        "VALOR ADQUISICION ACUM",
+        "CUM ACQUIS VAL",
+    ],
+    "KNAFA": [
+        "KNAFA",
+        "DEPR NORM ACUM",
+        "DEPRECIACION NORMAL ACUM",
+        "ACCM ORD DEPREC",
+    ],
+    "KSAFA": [
+        "KSAFA",
+        "DEPR ESPE ACUM",
+        "DEPRECIACION ESPECIAL ACUM",
+        "CUM SPEC DEP",
+    ],
+    "KAAFA": [
+        "KAAFA",
+        "DEPR EXTR ACUM",
+        "DEPRECIACION EXTRAORD ACUM",
+        "CUM UNPLND DEP",
+    ],
+    "KMAFA": [
+        "KMAFA",
+        "RESERVA ACUM",
+        "CUM RESERVES",
+    ],
+    "BELNR": [
+        "BELNR",
+        "N DOC",
+        "NUM DOC",
+        "DOCUMENTO",
+        "DOCUMENTNO",
+    ],
+    "BUZEI": [
+        "BUZEI",
+        "ITM",
+        "ITEM",
+    ],
+    "BWASL": [
+        "BWASL",
+        "TIPO DE MOVIMENTO",
+        "TIPO DE MOVIMIENTO",
+        "TRANSACTION TYPE",
+    ],
+    "BZDAT": [
+        "BZDAT",
+        "DATA REF",
+        "FECHA REF",
+        "ASSTVAL DATE",
+    ],
+    "ANBTR": [
+        "ANBTR",
+        "MONTANTE LANCADO",
+        "IMPORTE CONTABILIZADO",
+        "AMOUNT POSTED",
+    ],
+    "NAFAB": [
+        "NAFAB",
+        "DEPR NORM MOV",
+        "DEPRECIACION NORMAL MOV",
+        "ORD DEP ON TRANS",
+    ],
+    "SAFAB": [
+        "SAFAB",
+        "DEPR ESPE MOV",
+        "DEPRECIACION ESPECIAL MOV",
+        "S DEP ON TRANS",
+    ],
+}
 
 
 def normalize_text(value):
     """
-    Normalize text values.
+    Normalize text values and pandas-like blanks.
     """
     if value is None:
         return ""
 
     value_text = str(value).strip()
 
-    if value_text.lower() == "nan":
+    if value_text.lower() in [
+        "nan",
+        "none",
+        "nat",
+        "<na>",
+    ]:
         return ""
 
     return value_text
@@ -67,7 +288,7 @@ def normalize_text(value):
 
 def normalize_header(value):
     """
-    Normalize a header for matching.
+    Normalize a header for case-insensitive matching.
     """
     return normalize_text(value).lower()
 
@@ -81,9 +302,7 @@ def normalize_currency(value):
 
 def normalize_company_output(value):
     """
-    Normalize company code for output display.
-
-    For FAM, keep leading zeroes because SAP company codes usually require them.
+    Normalize company code for output, preserving leading zeroes.
     """
     value_text = normalize_text(value)
 
@@ -95,11 +314,9 @@ def normalize_company_output(value):
 
 def normalize_company_for_filter(value):
     """
-    Normalize company code for comparison.
+    Normalize company code for comparisons.
 
-    This allows config COMPANIES to contain either:
-    - 0034
-    - 34
+    This allows config COMPANIES to contain either 0034 or 34.
     """
     value_text = normalize_text(value)
 
@@ -114,29 +331,39 @@ def normalize_company_for_filter(value):
 
 def parse_companies_filter(value):
     """
-    Parse module COMPANIES filter into normalized values.
-
-    Accepted values:
-    - ALL means no filter.
-    - Blank means no filter.
-    - 0034,0052
-    - 0034;0052
-    - 0034|0052
-    - 0034 0052
+    Parse the module COMPANIES filter into normalized values.
     """
     value_text = normalize_text(value)
 
     if value_text == "":
         return []
 
-    if value_text.upper() in ["ALL", "TODAS", "TODOS"]:
+    if value_text.upper() in [
+        "ALL",
+        "TODAS",
+        "TODOS",
+    ]:
         return []
 
-    for separator in [";", "|", "\n", "\r", "\t"]:
-        value_text = value_text.replace(separator, ",")
+    for separator in [
+        ";",
+        "|",
+        "\n",
+        "\r",
+        "\t",
+    ]:
+        value_text = value_text.replace(
+            separator,
+            ",",
+        )
 
-    if "," not in value_text and " " in value_text:
-        value_text = ",".join(value_text.split())
+    if (
+        "," not in value_text
+        and " " in value_text
+    ):
+        value_text = ",".join(
+            value_text.split()
+        )
 
     companies = []
 
@@ -146,24 +373,23 @@ def parse_companies_filter(value):
         if item == "":
             continue
 
-        if item.upper() in ["ALL", "TODAS", "TODOS"]:
+        if item.upper() in [
+            "ALL",
+            "TODAS",
+            "TODOS",
+        ]:
             return []
 
-        companies.append(normalize_company_for_filter(item))
+        companies.append(
+            normalize_company_for_filter(item)
+        )
 
     return companies
 
 
 def to_datetime_value(value):
     """
-    Convert a value to pandas datetime.
-
-    Handles:
-    - Excel dates
-    - Python datetime values
-    - ISO dates like 2026-02-28
-    - SAP dates like 28.02.2026
-    - Local dates like 28/02/2026
+    Convert Excel, ISO, SAP, or local dates to pandas datetime.
     """
     if pd.isna(value):
         return pd.NaT
@@ -176,23 +402,27 @@ def to_datetime_value(value):
     if value_text == "":
         return pd.NaT
 
-    if len(value_text) >= 10 and value_text[4:5] == "-" and value_text[7:8] == "-":
-        return pd.to_datetime(value_text, errors="coerce", dayfirst=False)
+    if (
+        len(value_text) >= 10
+        and value_text[4:5] == "-"
+        and value_text[7:8] == "-"
+    ):
+        return pd.to_datetime(
+            value_text,
+            errors="coerce",
+            dayfirst=False,
+        )
 
-    return pd.to_datetime(value_text, errors="coerce", dayfirst=True)
+    return pd.to_datetime(
+        value_text,
+        errors="coerce",
+        dayfirst=True,
+    )
 
 
 def parse_number(value):
     """
-    Parse a number from SAP/Excel text.
-
-    Handles:
-    - 326,987.93
-    - -326,987.93
-    - 1.00
-    - 0.48
-    - 1.048,46
-    - blank
+    Parse SAP/Excel numbers using US or Brazilian separators.
     """
     if pd.isna(value):
         return pd.NA
@@ -205,27 +435,54 @@ def parse_number(value):
     if value_text == "":
         return pd.NA
 
-    value_text = value_text.replace(" ", "")
+    value_text = value_text.replace(
+        " ",
+        "",
+    )
 
-    is_negative = value_text.startswith("(") and value_text.endswith(")")
+    is_negative = (
+        value_text.startswith("(")
+        and value_text.endswith(")")
+    )
 
     if is_negative:
         value_text = value_text[1:-1]
 
-    if "," in value_text and "." in value_text:
+    if (
+        "," in value_text
+        and "." in value_text
+    ):
         last_comma = value_text.rfind(",")
         last_dot = value_text.rfind(".")
 
         if last_comma > last_dot:
-            value_text = value_text.replace(".", "")
-            value_text = value_text.replace(",", ".")
+            value_text = value_text.replace(
+                ".",
+                "",
+            )
+            value_text = value_text.replace(
+                ",",
+                ".",
+            )
+
         else:
-            value_text = value_text.replace(",", "")
-    elif "," in value_text and "." not in value_text:
-        value_text = value_text.replace(",", ".")
+            value_text = value_text.replace(
+                ",",
+                "",
+            )
+
+    elif (
+        "," in value_text
+        and "." not in value_text
+    ):
+        value_text = value_text.replace(
+            ",",
+            ".",
+        )
 
     try:
         parsed_number = float(value_text)
+
     except ValueError:
         return pd.NA
 
@@ -237,14 +494,21 @@ def parse_number(value):
 
 def get_period_suffix(module_config):
     """
-    Return YYYYMMDD suffix using module TO date.
+    Return YYYYMMDD using the FAM module TO date.
     """
-    to_date = module_config.get("to", "")
-    parsed_date = to_datetime_value(to_date)
+    to_date = module_config.get(
+        "to",
+        "",
+    )
+
+    parsed_date = to_datetime_value(
+        to_date
+    )
 
     if pd.isna(parsed_date):
         raise ValueError(
-            "Could not determine FAM period because module TO date is empty or invalid."
+            "Could not determine FAM period because "
+            "module TO date is empty or invalid."
         )
 
     return parsed_date.strftime("%Y%m%d")
@@ -252,47 +516,93 @@ def get_period_suffix(module_config):
 
 def get_fam_input_file(context):
     """
-    Return expected FAM AR01 input file.
-
-    Pattern:
-        input/LBR FAM AR_YYYYMMDD.xlsx
+    Return exactly one supported FAM AR input for the configured period.
     """
-    input_folder = Path(context["input_folder"])
+    input_folder = Path(
+        context["input_folder"]
+    )
+
     module_config = context["module"]
-    period_suffix = get_period_suffix(module_config)
 
-    input_file = input_folder / f"{FAM_INPUT_PREFIX}{period_suffix}{FAM_INPUT_EXTENSION}"
+    period_suffix = get_period_suffix(
+        module_config
+    )
 
-    if not input_file.exists():
-        raise FileNotFoundError(
-            f"FAM input file not found.\n"
-            f"Expected file: {input_file}\n"
-            f"Please export AR01 and save it using this exact naming convention:\n"
-            f"{FAM_INPUT_PREFIX}{period_suffix}{FAM_INPUT_EXTENSION}"
+    candidates = [
+        input_folder
+        / (
+            f"{prefix}"
+            f"{period_suffix}"
+            f"{FAM_INPUT_EXTENSION}"
+        )
+        for prefix in FAM_INPUT_PREFIXES
+    ]
+
+    existing_files = [
+        file_path
+        for file_path in candidates
+        if file_path.exists()
+    ]
+
+    if len(existing_files) == 0:
+        expected_files = "\n".join(
+            f"- {file_path}"
+            for file_path in candidates
         )
 
-    return input_file
+        raise FileNotFoundError(
+            "FAM input file not found. "
+            "Expected one of:\n"
+            f"{expected_files}"
+        )
+
+    if len(existing_files) > 1:
+        matching_files = "\n".join(
+            f"- {file_path}"
+            for file_path in existing_files
+        )
+
+        raise ValueError(
+            "Multiple FAM AR input files were found. "
+            "Keep only one supported file for the "
+            f"configured period:\n{matching_files}"
+        )
+
+    return existing_files[0]
 
 
 def get_fx_rates_file(context):
     """
-    Return expected FX rates input file.
-
-    Pattern:
-        input/FxRates_YYYYMMDD.xlsx
+    Return input/FxRates_YYYYMMDD.xlsx.
     """
-    input_folder = Path(context["input_folder"])
-    module_config = context["module"]
-    period_suffix = get_period_suffix(module_config)
+    input_folder = Path(
+        context["input_folder"]
+    )
 
-    fx_rates_file = input_folder / f"{FX_INPUT_PREFIX}{period_suffix}{FX_INPUT_EXTENSION}"
+    module_config = context["module"]
+
+    period_suffix = get_period_suffix(
+        module_config
+    )
+
+    fx_rates_file = (
+        input_folder
+        / (
+            f"{FX_INPUT_PREFIX}"
+            f"{period_suffix}"
+            f"{FX_INPUT_EXTENSION}"
+        )
+    )
 
     if not fx_rates_file.exists():
         raise FileNotFoundError(
-            f"FX rates file not found.\n"
+            "FX rates file not found.\n"
             f"Expected file: {fx_rates_file}\n"
-            f"Please save FX rates using this exact naming convention:\n"
-            f"{FX_INPUT_PREFIX}{period_suffix}{FX_INPUT_EXTENSION}"
+            "Please save FX rates using this "
+            "exact naming convention:\n"
+            f"{FX_INPUT_PREFIX}"
+            f"{period_suffix}"
+            f"{FX_INPUT_EXTENSION}"
         )
 
     return fx_rates_file
@@ -300,38 +610,53 @@ def get_fx_rates_file(context):
 
 def get_fam_output_file(context):
     """
-    Return final FAM output workbook path.
-
-    Pattern:
-        output/LBR_Results_FAM_YYYYMMDD.xlsx
+    Return output/LBR_Results_FAM_YYYYMMDD.xlsx.
     """
-    output_folder = Path(context["output_folder"])
-    module_config = context["module"]
-    period_suffix = get_period_suffix(module_config)
+    output_folder = Path(
+        context["output_folder"]
+    )
 
-    return output_folder / f"LBR_Results_FAM_{period_suffix}.xlsx"
+    module_config = context["module"]
+
+    period_suffix = get_period_suffix(
+        module_config
+    )
+
+    return (
+        output_folder
+        / f"LBR_Results_FAM_{period_suffix}.xlsx"
+    )
 
 
 def read_input_file(file_path):
     """
-    Read input Excel file into a dataframe.
+    Read the first worksheet from an Excel input.
     """
     file_path = Path(file_path)
 
     if not file_path.exists():
-        raise FileNotFoundError(f"Input file not found: {file_path}")
+        raise FileNotFoundError(
+            f"Input file not found: {file_path}"
+        )
 
     return pd.read_excel(file_path)
 
 
 def clean_dataframe(dataframe):
     """
-    Clean dataframe columns and empty rows/columns.
+    Remove fully empty rows/columns and trim headers.
     """
     result = dataframe.copy()
 
-    result = result.dropna(axis=0, how="all")
-    result = result.dropna(axis=1, how="all")
+    result = result.dropna(
+        axis=0,
+        how="all",
+    )
+
+    result = result.dropna(
+        axis=1,
+        how="all",
+    )
 
     result.columns = [
         normalize_text(column)
@@ -341,9 +666,200 @@ def clean_dataframe(dataframe):
     return result
 
 
-def find_column(dataframe, possible_names):
+def normalize_fam_ar_columns(dataframe):
     """
-    Find a dataframe column using exact case-insensitive matching.
+    Normalize FAM AR headers to the canonical names used by FAM01-FAM04.
+    """
+    result = dataframe.copy()
+    rename_map = {}
+
+    for canonical_name, aliases in (
+        FAM_AR_COLUMN_ALIASES.items()
+    ):
+        normalized_aliases = {
+            normalize_header(alias)
+            for alias in aliases
+        }
+
+        matching_columns = [
+            column
+            for column in result.columns
+            if normalize_header(column)
+            in normalized_aliases
+        ]
+
+        if len(matching_columns) > 1:
+            raise ValueError(
+                "LBR FAM AR contains ambiguous "
+                f"columns for '{canonical_name}': "
+                f"{matching_columns}. Keep only one "
+                "accepted alias for this field."
+            )
+
+        if len(matching_columns) == 1:
+            source_column = matching_columns[0]
+
+            if source_column != canonical_name:
+                rename_map[source_column] = (
+                    canonical_name
+                )
+
+    normalized_dataframe = (
+        result.rename(
+            columns=rename_map,
+        ).copy()
+    )
+
+    if normalized_dataframe.empty:
+        raise ValueError(
+            "LBR FAM AR contains no data rows."
+        )
+
+    missing_columns = [
+        column
+        for column
+        in FAM_AR_REQUIRED_CANONICAL_COLUMNS
+        if column
+        not in normalized_dataframe.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(
+            "LBR FAM AR is missing required "
+            "columns after header normalization. "
+            f"Missing: {missing_columns}. "
+            f"Available columns: "
+            f"{list(result.columns)}"
+        )
+
+    return normalized_dataframe
+
+
+def normalize_fam_support_header(value):
+    """
+    Normalize a BAL/MOV header for multilingual alias matching.
+    """
+    value_text = normalize_text(
+        value
+    ).upper()
+
+    value_text = unicodedata.normalize(
+        "NFKD",
+        value_text,
+    )
+
+    value_text = "".join(
+        character
+        for character in value_text
+        if not unicodedata.combining(
+            character
+        )
+    )
+
+    value_text = re.sub(
+        r"[^A-Z0-9]+",
+        " ",
+        value_text,
+    )
+
+    return " ".join(
+        value_text.split()
+    )
+
+
+def normalize_fam_support_columns(dataframe):
+    """
+    Normalize Portuguese, Spanish, English, or SAP BAL/MOV headers.
+    """
+    alias_to_technical = {}
+
+    for technical_name, aliases in (
+        FAM_SUPPORT_COLUMN_ALIASES.items()
+    ):
+        for alias in aliases:
+            normalized_alias = (
+                normalize_fam_support_header(
+                    alias
+                )
+            )
+
+            existing_name = (
+                alias_to_technical.get(
+                    normalized_alias
+                )
+            )
+
+            if (
+                existing_name is not None
+                and existing_name
+                != technical_name
+            ):
+                raise ValueError(
+                    "Conflicting FAM support alias "
+                    f"configuration for '{alias}': "
+                    f"{existing_name} and "
+                    f"{technical_name}."
+                )
+
+            alias_to_technical[
+                normalized_alias
+            ] = technical_name
+
+    normalized_columns = []
+    used_columns = set()
+
+    for column in dataframe.columns:
+        column_key = (
+            normalize_fam_support_header(
+                column
+            )
+        )
+
+        normalized_column = (
+            alias_to_technical.get(
+                column_key,
+                normalize_text(
+                    column
+                ).upper(),
+            )
+        )
+
+        if normalized_column in used_columns:
+            suffix = 1
+
+            unique_column = (
+                f"{normalized_column}_{suffix}"
+            )
+
+            while unique_column in used_columns:
+                suffix += 1
+
+                unique_column = (
+                    f"{normalized_column}_{suffix}"
+                )
+
+            normalized_column = unique_column
+
+        normalized_columns.append(
+            normalized_column
+        )
+
+        used_columns.add(
+            normalized_column
+        )
+
+    result = dataframe.copy()
+    result.columns = normalized_columns
+
+    return result
+
+
+def find_column(
+    dataframe,
+    possible_names,
+):
+    """
+    Find a DataFrame column using exact case-insensitive matching.
     """
     normalized_lookup = {
         normalize_header(column): column
@@ -351,33 +867,47 @@ def find_column(dataframe, possible_names):
     }
 
     for possible_name in possible_names:
-        normalized_name = normalize_header(possible_name)
+        normalized_name = normalize_header(
+            possible_name
+        )
 
         if normalized_name in normalized_lookup:
-            return normalized_lookup[normalized_name]
+            return normalized_lookup[
+                normalized_name
+            ]
 
     return None
 
 
-def require_columns(dataframe, required_columns):
+def require_columns(
+    dataframe,
+    required_columns,
+):
     """
-    Validate required columns.
-
-    Returns a dictionary:
-        logical_name -> actual dataframe column name
+    Resolve and validate a dictionary of required logical columns.
     """
     resolved_columns = {}
     missing_columns = []
 
-    for logical_name, possible_names in required_columns.items():
-        column_name = find_column(dataframe, possible_names)
+    for (
+        logical_name,
+        possible_names,
+    ) in required_columns.items():
+        column_name = find_column(
+            dataframe,
+            possible_names,
+        )
 
         if column_name is None:
             missing_columns.append(
-                f"{logical_name}: expected one of {possible_names}"
+                f"{logical_name}: expected "
+                f"one of {possible_names}"
             )
+
         else:
-            resolved_columns[logical_name] = column_name
+            resolved_columns[
+                logical_name
+            ] = column_name
 
     if missing_columns:
         raise ValueError(
@@ -388,66 +918,85 @@ def require_columns(dataframe, required_columns):
     return resolved_columns
 
 
-def get_optional_column(dataframe, possible_names):
+def get_optional_column(
+    dataframe,
+    possible_names,
+):
     """
-    Return a column if found, otherwise None.
+    Return a matching column or None.
     """
-    return find_column(dataframe, possible_names)
+    return find_column(
+        dataframe,
+        possible_names,
+    )
 
 
-def filter_by_company(dataframe, company_column, companies_filter):
+def filter_by_company(
+    dataframe,
+    company_column,
+    companies_filter,
+):
     """
-    Filter dataframe by module companies.
-
-    If COMPANIES is blank or ALL, returns all rows.
+    Apply the configured company filter.
     """
     result = dataframe.copy()
-    companies = parse_companies_filter(companies_filter)
+
+    companies = parse_companies_filter(
+        companies_filter
+    )
 
     if not companies:
         return result
 
-    normalized_company = result[company_column].apply(normalize_company_for_filter)
+    normalized_company = (
+        result[company_column].apply(
+            normalize_company_for_filter
+        )
+    )
 
-    return result[normalized_company.isin(companies)].copy()
+    return result[
+        normalized_company.isin(companies)
+    ].copy()
 
 
 def load_fam_ar01_data(context):
     """
-    Load and normalize the FAM AR01 input.
+    Load and normalize the shared FAM AR input.
     """
-    input_file = get_fam_input_file(context)
+    input_file = get_fam_input_file(
+        context
+    )
 
-    dataframe = read_input_file(input_file)
-    dataframe = clean_dataframe(dataframe)
+    dataframe = read_input_file(
+        input_file
+    )
+
+    dataframe = clean_dataframe(
+        dataframe
+    )
+
+    dataframe = normalize_fam_ar_columns(
+        dataframe
+    )
 
     return dataframe
 
 
 def load_fx_rates_data(context):
     """
-    Load FX rates.
-
-    Supported formats:
-
-    1. Simple manual format:
-        Currency
-        Rate USD (To)
-        Fecha rate USD
-
-    2. SAP SQVI / TCURR export format:
-        CgCâ / TCot
-        De
-        Para / A
-        Vál.desde / Válido de
-        Taxa câmbio / Tipo cambio
-        Fator (origem) / Factor (de)
-        Fator (para) / Factor (a)
+    Load a simple FX table or a SAP SQVI/TCURR export.
     """
-    fx_rates_file = get_fx_rates_file(context)
+    fx_rates_file = get_fx_rates_file(
+        context
+    )
 
-    raw_dataframe = read_input_file(fx_rates_file)
-    raw_dataframe = clean_dataframe(raw_dataframe)
+    raw_dataframe = read_input_file(
+        fx_rates_file
+    )
+
+    raw_dataframe = clean_dataframe(
+        raw_dataframe
+    )
 
     currency_column = find_column(
         raw_dataframe,
@@ -459,6 +1008,7 @@ def load_fx_rates_data(context):
             "Moneda",
         ],
     )
+
     rate_column = find_column(
         raw_dataframe,
         [
@@ -470,6 +1020,7 @@ def load_fx_rates_data(context):
             "Taxa",
         ],
     )
+
     rate_date_column = find_column(
         raw_dataframe,
         [
@@ -481,11 +1032,36 @@ def load_fx_rates_data(context):
         ],
     )
 
-    if currency_column is not None and rate_column is not None and rate_date_column is not None:
+    if (
+        currency_column is not None
+        and rate_column is not None
+        and rate_date_column is not None
+    ):
         fx_dataframe = pd.DataFrame()
-        fx_dataframe["Currency"] = raw_dataframe[currency_column].apply(normalize_currency)
-        fx_dataframe["Rate USD (To)"] = raw_dataframe[rate_column].apply(parse_number)
-        fx_dataframe["Fecha rate USD"] = raw_dataframe[rate_date_column].apply(to_datetime_value)
+
+        fx_dataframe["Currency"] = (
+            raw_dataframe[
+                currency_column
+            ].apply(
+                normalize_currency
+            )
+        )
+
+        fx_dataframe["Rate USD (To)"] = (
+            raw_dataframe[
+                rate_column
+            ].apply(
+                parse_number
+            )
+        )
+
+        fx_dataframe["Fecha rate USD"] = (
+            raw_dataframe[
+                rate_date_column
+            ].apply(
+                to_datetime_value
+            )
+        )
 
         fx_dataframe = fx_dataframe.dropna(
             subset=[
@@ -495,69 +1071,108 @@ def load_fx_rates_data(context):
             how="any",
         )
 
-        fx_dataframe = fx_dataframe[fx_dataframe["Currency"] != ""].copy()
+        fx_dataframe = fx_dataframe[
+            fx_dataframe["Currency"] != ""
+        ].copy()
 
         if fx_dataframe.empty:
             raise ValueError(
-                f"FX rates file has no valid rates: {fx_rates_file}"
+                "FX rates file has no valid "
+                f"rates: {fx_rates_file}"
             )
 
-        fx_dataframe = fx_dataframe.sort_values(
-            by=[
-                "Currency",
-                "Fecha rate USD",
-            ],
-            ascending=[
-                True,
-                False,
-            ],
+        fx_dataframe = (
+            fx_dataframe.sort_values(
+                by=[
+                    "Currency",
+                    "Fecha rate USD",
+                ],
+                ascending=[
+                    True,
+                    False,
+                ],
+            )
         )
 
-        fx_dataframe = fx_dataframe.drop_duplicates(
-            subset=[
-                "Currency",
-            ],
-            keep="first",
+        fx_dataframe = (
+            fx_dataframe.drop_duplicates(
+                subset=["Currency"],
+                keep="first",
+            )
         )
 
-        fx_dataframe.attrs["source_format"] = "simple"
-        fx_dataframe.attrs["source_file"] = str(fx_rates_file)
+        fx_dataframe.attrs[
+            "source_format"
+        ] = "simple"
+
+        fx_dataframe.attrs[
+            "source_file"
+        ] = str(fx_rates_file)
 
         return fx_dataframe
 
-    sap_fx_dataframe, raw_sap_dataframe = read_sap_fx_rates_file(fx_rates_file)
+    (
+        sap_fx_dataframe,
+        raw_sap_dataframe,
+    ) = read_sap_fx_rates_file(
+        fx_rates_file
+    )
 
-    sap_fx_dataframe.attrs["source_format"] = "sap_tcurr"
-    sap_fx_dataframe.attrs["source_file"] = str(fx_rates_file)
-    sap_fx_dataframe.attrs["raw_rows"] = len(raw_sap_dataframe)
-    sap_fx_dataframe.attrs["requested_date"] = context["module"].get("to", "")
+    sap_fx_dataframe.attrs[
+        "source_format"
+    ] = "sap_tcurr"
+
+    sap_fx_dataframe.attrs[
+        "source_file"
+    ] = str(fx_rates_file)
+
+    sap_fx_dataframe.attrs[
+        "raw_rows"
+    ] = len(raw_sap_dataframe)
+
+    sap_fx_dataframe.attrs[
+        "requested_date"
+    ] = context["module"].get(
+        "to",
+        "",
+    )
 
     return sap_fx_dataframe
 
 
 def build_fx_rate_lookup(fx_dataframe):
     """
-    Build FX lookup by currency.
+    Build an FX lookup by currency.
 
-    Output lookup rate always means:
-        local currency per 1 USD
-
-    Therefore:
-        USD = LC / Rate USD (To)
-
-    SAP helper select_fx_rate_row returns final_fx_rate as LC -> USD multiplier.
-    Therefore for SAP:
-        Rate USD (To) = 1 / final_fx_rate
+    The returned rate means local currency per USD.
     """
-    source_format = fx_dataframe.attrs.get("source_format", "simple")
+    source_format = (
+        fx_dataframe.attrs.get(
+            "source_format",
+            "simple",
+        )
+    )
 
     lookup = {}
 
     if source_format == "simple":
         for _, row in fx_dataframe.iterrows():
-            currency = normalize_currency(row.get("Currency", ""))
-            rate = row.get("Rate USD (To)", pd.NA)
-            rate_date = row.get("Fecha rate USD", pd.NaT)
+            currency = normalize_currency(
+                row.get(
+                    "Currency",
+                    "",
+                )
+            )
+
+            rate = row.get(
+                "Rate USD (To)",
+                pd.NA,
+            )
+
+            rate_date = row.get(
+                "Fecha rate USD",
+                pd.NaT,
+            )
 
             if currency == "":
                 continue
@@ -585,13 +1200,23 @@ def build_fx_rate_lookup(fx_dataframe):
         return lookup
 
     if source_format == "sap_tcurr":
-        requested_date = fx_dataframe.attrs.get("requested_date", "")
+        requested_date = (
+            fx_dataframe.attrs.get(
+                "requested_date",
+                "",
+            )
+        )
 
         currencies = set()
 
-        if "from_currency" in fx_dataframe.columns:
+        if (
+            "from_currency"
+            in fx_dataframe.columns
+        ):
             currencies.update(
-                fx_dataframe["from_currency"]
+                fx_dataframe[
+                    "from_currency"
+                ]
                 .dropna()
                 .astype(str)
                 .str.strip()
@@ -599,9 +1224,14 @@ def build_fx_rate_lookup(fx_dataframe):
                 .tolist()
             )
 
-        if "to_currency" in fx_dataframe.columns:
+        if (
+            "to_currency"
+            in fx_dataframe.columns
+        ):
             currencies.update(
-                fx_dataframe["to_currency"]
+                fx_dataframe[
+                    "to_currency"
+                ]
                 .dropna()
                 .astype(str)
                 .str.strip()
@@ -612,7 +1242,12 @@ def build_fx_rate_lookup(fx_dataframe):
         currencies = sorted(
             currency
             for currency in currencies
-            if currency not in ["", "USD", "NAN", "NONE"]
+            if currency not in [
+                "",
+                "USD",
+                "NAN",
+                "NONE",
+            ]
         )
 
         for currency in currencies:
@@ -633,36 +1268,80 @@ def build_fx_rate_lookup(fx_dataframe):
                     "date": pd.NaT,
                     "status": "Review",
                     "source": "sap_tcurr",
-                    "notes": result.get("notes", ""),
+                    "notes": result.get(
+                        "notes",
+                        "",
+                    ),
                 }
+
                 continue
 
-            final_fx_rate = result.get("final_fx_rate", None)
+            final_fx_rate = result.get(
+                "final_fx_rate",
+                None,
+            )
 
-            if final_fx_rate is None or pd.isna(final_fx_rate) or float(final_fx_rate) == 0:
+            if (
+                final_fx_rate is None
+                or pd.isna(final_fx_rate)
+                or float(final_fx_rate) == 0
+            ):
                 lookup[currency] = {
                     "rate": pd.NA,
-                    "date": result.get("sap_valid_date", pd.NaT),
+                    "date": result.get(
+                        "sap_valid_date",
+                        pd.NaT,
+                    ),
                     "status": "Review",
                     "source": "sap_tcurr",
-                    "notes": "Final FX rate is empty or zero.",
+                    "notes": (
+                        "Final FX rate is "
+                        "empty or zero."
+                    ),
                 }
+
                 continue
 
-            rate_usd_to = 1 / float(final_fx_rate)
+            rate_usd_to = (
+                1 / float(final_fx_rate)
+            )
 
             lookup[currency] = {
                 "rate": rate_usd_to,
-                "date": result.get("sap_valid_date", pd.NaT),
+                "date": result.get(
+                    "sap_valid_date",
+                    pd.NaT,
+                ),
                 "status": "OK",
                 "source": "sap_tcurr",
-                "notes": result.get("notes", ""),
-                "selected_tcot": result.get("selected_tcot", ""),
-                "direction": result.get("direction", ""),
-                "sap_raw_rate": result.get("sap_raw_rate", None),
-                "adjusted_rate": result.get("adjusted_rate", None),
-                "factor_from": result.get("factor_from", None),
-                "factor_to": result.get("factor_to", None),
+                "notes": result.get(
+                    "notes",
+                    "",
+                ),
+                "selected_tcot": result.get(
+                    "selected_tcot",
+                    "",
+                ),
+                "direction": result.get(
+                    "direction",
+                    "",
+                ),
+                "sap_raw_rate": result.get(
+                    "sap_raw_rate",
+                    None,
+                ),
+                "adjusted_rate": result.get(
+                    "adjusted_rate",
+                    None,
+                ),
+                "factor_from": result.get(
+                    "factor_from",
+                    None,
+                ),
+                "factor_to": result.get(
+                    "factor_to",
+                    None,
+                ),
             }
 
         lookup["USD"] = {
@@ -676,13 +1355,16 @@ def build_fx_rate_lookup(fx_dataframe):
         return lookup
 
     raise ValueError(
-        f"Unsupported FX source format: {source_format}"
+        "Unsupported FX source format: "
+        f"{source_format}"
     )
 
 
-def open_or_create_fam_output_workbook(output_file):
+def open_or_create_fam_output_workbook(
+    output_file,
+):
     """
-    Open an existing FAM output workbook or create a new one.
+    Open the shared FAM workbook or create an empty one.
     """
     output_file = Path(output_file)
 
@@ -690,41 +1372,72 @@ def open_or_create_fam_output_workbook(output_file):
         return load_workbook(output_file)
 
     workbook = Workbook()
-
     default_sheet = workbook.active
+
     workbook.remove(default_sheet)
 
     return workbook
 
 
-def recreate_fam_sheet(workbook, sheet_name):
+def recreate_fam_sheet(
+    workbook,
+    sheet_name,
+):
     """
-    Recreate only one sheet.
-
-    This deletes/replaces the requested control sheet only.
-    It does not delete sheets from other controls.
+    Recreate only the requested FAM output sheet.
     """
     if sheet_name in workbook.sheetnames:
         del workbook[sheet_name]
 
-    return workbook.create_sheet(sheet_name)
+    return workbook.create_sheet(
+        sheet_name
+    )
 
 
-def write_dataframe_to_sheet(worksheet, dataframe):
+def write_dataframe_to_sheet(
+    worksheet,
+    dataframe,
+):
     """
-    Write a dataframe to an openpyxl worksheet.
+    Write a DataFrame into an openpyxl worksheet.
     """
-    for column_index, column_name in enumerate(dataframe.columns, start=1):
+    for (
+        column_index,
+        column_name,
+    ) in enumerate(
+        dataframe.columns,
+        start=1,
+    ):
         worksheet.cell(
             row=1,
             column=column_index,
             value=column_name,
         )
 
-    for row_index, row in enumerate(dataframe.itertuples(index=False), start=2):
-        for column_index, value in enumerate(row, start=1):
+    for (
+        row_index,
+        row,
+    ) in enumerate(
+        dataframe.itertuples(index=False),
+        start=2,
+    ):
+        for (
+            column_index,
+            value,
+        ) in enumerate(
+            row,
+            start=1,
+        ):
             if pd.isna(value):
                 value = None
+
+            if isinstance(
+                value,
+                pd.Timestamp,
+            ):
+                value = (
+                    value.to_pydatetime()
+                )
 
             worksheet.cell(
                 row=row_index,
@@ -741,11 +1454,19 @@ def apply_standard_fam_formatting(
     integer_columns=None,
 ):
     """
-    Apply standard formatting to a FAM output sheet.
+    Apply common FAM formats.
     """
-    date_columns = date_columns or set()
-    amount_columns = amount_columns or set()
-    integer_columns = integer_columns or set()
+    date_columns = set(
+        date_columns or []
+    )
+
+    amount_columns = set(
+        amount_columns or []
+    )
+
+    integer_columns = set(
+        integer_columns or []
+    )
 
     header_fill = PatternFill(
         fill_type="solid",
@@ -758,53 +1479,117 @@ def apply_standard_fam_formatting(
 
     worksheet.freeze_panes = "A2"
 
-    if worksheet.max_row >= 1 and worksheet.max_column >= 1:
-        worksheet.auto_filter.ref = worksheet.dimensions
+    if (
+        worksheet.max_row >= 1
+        and worksheet.max_column >= 1
+    ):
+        worksheet.auto_filter.ref = (
+            worksheet.dimensions
+        )
 
     column_name_by_index = {
         column_index: column_name
-        for column_index, column_name in enumerate(dataframe.columns, start=1)
+        for (
+            column_index,
+            column_name,
+        ) in enumerate(
+            dataframe.columns,
+            start=1,
+        )
     }
 
-    for column_index, column_name in column_name_by_index.items():
-        column_letter = get_column_letter(column_index)
+    for (
+        column_index,
+        column_name,
+    ) in column_name_by_index.items():
+        column_letter = get_column_letter(
+            column_index
+        )
 
         if column_name in date_columns:
-            for row_index in range(2, worksheet.max_row + 1):
-                worksheet.cell(row=row_index, column=column_index).number_format = FAM_DATE_FORMAT
+            for row_index in range(
+                2,
+                worksheet.max_row + 1,
+            ):
+                worksheet.cell(
+                    row=row_index,
+                    column=column_index,
+                ).number_format = (
+                    FAM_DATE_FORMAT
+                )
 
         if column_name in amount_columns:
-            for row_index in range(2, worksheet.max_row + 1):
-                worksheet.cell(row=row_index, column=column_index).number_format = FAM_AMOUNT_FORMAT
+            for row_index in range(
+                2,
+                worksheet.max_row + 1,
+            ):
+                worksheet.cell(
+                    row=row_index,
+                    column=column_index,
+                ).number_format = (
+                    FAM_AMOUNT_FORMAT
+                )
 
         if column_name in integer_columns:
-            for row_index in range(2, worksheet.max_row + 1):
-                worksheet.cell(row=row_index, column=column_index).number_format = FAM_INTEGER_FORMAT
+            for row_index in range(
+                2,
+                worksheet.max_row + 1,
+            ):
+                worksheet.cell(
+                    row=row_index,
+                    column=column_index,
+                ).number_format = (
+                    FAM_INTEGER_FORMAT
+                )
 
-        max_length = len(normalize_text(column_name))
+        max_length = len(
+            normalize_text(column_name)
+        )
 
-        for row_index in range(2, worksheet.max_row + 1):
-            value = worksheet.cell(row=row_index, column=column_index).value
-            value_length = len(normalize_text(value))
+        for row_index in range(
+            2,
+            worksheet.max_row + 1,
+        ):
+            value = worksheet.cell(
+                row=row_index,
+                column=column_index,
+            ).value
+
+            value_length = len(
+                normalize_text(value)
+            )
 
             if value_length > max_length:
                 max_length = value_length
 
-        worksheet.column_dimensions[column_letter].width = min(max_length + 2, 60)
+        worksheet.column_dimensions[
+            column_letter
+        ].width = min(
+            max_length + 2,
+            60,
+        )
 
 
-def save_fam_output_workbook(workbook, output_file):
+def save_fam_output_workbook(
+    workbook,
+    output_file,
+):
     """
-    Save the FAM output workbook.
-
-    If the workbook is open in Excel, show a clear message.
+    Save the shared FAM workbook.
     """
     output_file = Path(output_file)
 
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     try:
         workbook.save(output_file)
+
     except PermissionError as error:
         raise PermissionError(
-            f"Could not save output workbook: {output_file}. "
-            f"Close the workbook and run again."
+            f"Could not save output workbook: "
+            f"{output_file}. Close the workbook "
+            "and run again."
         ) from error

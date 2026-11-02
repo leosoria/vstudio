@@ -19,6 +19,7 @@ from core.sd_common import (
     parse_config_companies,
     write_control_sheet,
 )
+from core.sd_common import enrich_sd_names
 
 CONTROL_ID = "SD_003"
 SHEET_NAME = "SD03"
@@ -26,14 +27,7 @@ KEY = ["Company", "Order Number", "Order Item"]
 DOC = KEY[:2]
 GRKEY = KEY + ["Document Number", "Fiscal Year", "Document Item"]
 
-COLUMNS = KEY + [
-    "Activity Type", "Trigger", "Vendor Code",
-    "Order Created By", "Receipt Posted By",
-    "Order Date", "Entry Date", "Document Number",
-    "Fiscal Year", "Document Item", "Movement Type",
-    "Debit Credit", "Quantity", "Amount", "Currency",
-    "Item Text", "Source File", "Source Row",
-]
+COLUMNS = KEY + ['Activity Type', 'Trigger', 'Vendor Code', 'Vendor Name', 'Order Created By', 'Order Created By Name', 'Receipt Posted By', 'Receipt Posted By Name', 'Order Date', 'Entry Date', 'Document Number', 'Fiscal Year', 'Document Item', 'Movement Type', 'Debit Credit', 'Quantity', 'Amount', 'Currency', 'Item Text', 'Source File', 'Source Row']
 
 
 def _unique(frame, key, label):
@@ -390,6 +384,10 @@ def run_sd_003(context):
         "service coverage not demonstrated."
     )
 
+    output = enrich_sd_names(
+        context, output,
+        user_columns={'Order Created By': 'Order Created By Name', 'Receipt Posted By': 'Receipt Posted By Name'},
+    )
     path = write_control_sheet(
         context,
         SHEET_NAME,

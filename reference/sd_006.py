@@ -10,10 +10,11 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
 from core.sd_common import normalize_text, normalize_identifier, normalize_company, normalize_lookup, parse_sap_date, parse_sap_amount, parse_config_date, parse_config_companies, get_period_suffix, write_control_sheet
+from core.sd_common import enrich_sd_names
 DOC = ['Company', 'Fiscal Year', 'Document Number']
 KEY = DOC + ['Document Item']
-VISIBLE = ['Company', 'Document Number', 'Fiscal Year', 'Document Item', 'Trigger', 'GL Account', 'GL Account Name', 'Account Created By', 'Account Created On', 'Journal Posted By', 'Entry Date', 'Debit Amount', 'Credit Amount', 'Document Currency', 'Item Text']
-EXTRA = ['Journal Key', 'Chart of Accounts', 'Account Type', 'Posting Key', 'Vendor Code', 'Customer Code', 'Amount in Local Currency', 'Local Currency', 'Document Type', 'Transaction Code', 'Debit Credit', 'Amount in Document Currency', 'Journal Source File', 'Journal Source Row', 'GL Source File', 'GL Source Row', 'Detail Sources', 'Detail Validation']
+VISIBLE = ['Company', 'Document Number', 'Fiscal Year', 'Document Item', 'Trigger', 'GL Account', 'GL Account Name', 'Vendor Code', 'Vendor Name', 'Account Created By', 'Account Created By Name', 'Account Created On', 'Journal Posted By', 'Journal Posted By Name', 'Entry Date', 'Debit Amount', 'Credit Amount', 'Document Currency', 'Item Text']
+EXTRA = ['Journal Key', 'Chart of Accounts', 'Account Type', 'Posting Key', 'Customer Code', 'Amount in Local Currency', 'Local Currency', 'Document Type', 'Transaction Code', 'Debit Credit', 'Amount in Document Currency', 'Journal Source File', 'Journal Source Row', 'GL Source File', 'GL Source Row', 'Detail Sources', 'Detail Validation']
 
 def ident(value, width):
     text = normalize_identifier(value).upper()
@@ -84,7 +85,7 @@ def detect(context, accounts):
     stats = dict(files=len(files), scoped_positions=0, missing_master=0, missing_creation_evidence=0, missing_poster=0)
     candidates = {}
     for path in files:
-        book = load_workbook(path, read_only=True, data_only=False)
+        book = _sd06_read_input(path, read_only=True, data_only=False)
         count = 0
         try:
             rows = book['Sheet1'].iter_rows(values_only=True)
@@ -147,7 +148,7 @@ def details(context, documents):
     result = {}
     schema = [('Company', 'CoCd', 1), ('Fiscal Year', 'Year', 1), ('Document Number', 'DocumentNo', 1), ('Document Item', 'Itm', 1), ('Account Type', 'AccTy', 1), ('Posting Key', 'PK', 1), ('GL Account', 'G/L', 1), ('Vendor Code', 'Vendor', 1), ('Customer Code', 'Customer', 1), ('Debit Credit', 'D/C', 1), ('Amount in Document Currency', 'Amount', 1), ('Amount in Local Currency', 'Amount in LC', 1), ('Item Text', 'Text', 1), ('BSEG Document Currency', 'Crcy', 1), ('BSEG Local Currency', 'Crcy', 2)]
     for path in files:
-        book = load_workbook(path, read_only=True, data_only=False)
+        book = _sd06_read_input(path, read_only=True, data_only=False)
         count = 0
         try:
             rows = book['Sheet1'].iter_rows(values_only=True)
@@ -205,7 +206,7 @@ def _sd06_collect_available(context, documents, records, headers, bseg=False):
         book = None
         count = 0
         try:
-            book = load_workbook(path, read_only=True, data_only=False)
+            book = _sd06_read_input(path, read_only=True, data_only=False)
             rows = book['Sheet1'].iter_rows(values_only=True)
             labels = [normalize_lookup(re.sub('\\.\\d+$', '', normalize_text(value))) for value in next(rows)]
 
@@ -353,6 +354,192 @@ def present(path, output, stats):
         if temporary is not None and temporary.exists():
             temporary.unlink()
 
+
+# SD06 performance helpers: input reading only.
+# Output writing continues using the original openpyxl reader/writer.
+from functools import lru_cache as _sd06_lru_cache
+from functools import wraps as _sd06_wraps
+from time import perf_counter as _sd06_clock
+from datetime import date as _sd06_date
+from datetime import datetime as _sd06_datetime
+from datetime import time as _sd06_time
+from itertools import islice as _sd06_islice
+from itertools import zip_longest as _sd06_zip_longest
+from zipfile import ZipFile as _sd06_ZipFile
+from python_calamine import CalamineWorkbook as _sd06_CalamineWorkbook
+
+
+def _sd06_fast_value(value):
+    if isinstance(value, _sd06_date) and not isinstance(
+        value, _sd06_datetime
+    ):
+        return _sd06_datetime.combine(value, _sd06_time())
+    if isinstance(value, str) and value == "":
+        return None
+    return value
+
+
+class _Sd06FastSheet:
+    def __init__(self, sheet):
+        self.sheet = sheet
+
+    def iter_rows(self, values_only=False):
+        if not values_only:
+            raise ValueError("SD06 fast reader supports values_only=True")
+        start = self.sheet.start
+        end = self.sheet.end
+        if start is None or end is None:
+            return
+        first_row, first_column = start
+        width = end[1] + 1
+
+        # Preserve physical Excel row/column coordinates.
+        for _ in range(first_row):
+            yield (None,) * width
+
+        for values in self.sheet.iter_rows():
+            row = [None] * first_column
+            row.extend(_sd06_fast_value(value) for value in values)
+            if len(row) < width:
+                row.extend([None] * (width - len(row)))
+            yield tuple(row)
+
+
+class _Sd06FastBook:
+    def __init__(self, path):
+        self.path = Path(path)
+        self.started = _sd06_clock()
+        self.book = _sd06_CalamineWorkbook.from_path(str(path))
+
+    def __getitem__(self, name):
+        return _Sd06FastSheet(self.book.get_sheet_by_name(name))
+
+    def close(self):
+        self.book.close()
+        print(
+            f"SD_006 - Input {self.path.name}: "
+            f"{_sd06_clock() - self.started:.2f}s "
+            "(calamine: read + processing)",
+            flush=True,
+        )
+
+
+@_sd06_lru_cache(maxsize=128)
+def _sd06_contains_formulas(path_text, size, modified):
+    # Calamine reads formula results. Preserve the previous data_only=False
+    # behavior by using openpyxl whenever formulas are present.
+    pattern = re.compile(
+        rb"<(?:[A-Za-z_][A-Za-z0-9_.-]*:)?f(?=[\s/>])"
+    )
+    with _sd06_ZipFile(path_text) as archive:
+        for name in archive.namelist():
+            if not (
+                name.startswith("xl/worksheets/")
+                and name.endswith(".xml")
+            ):
+                continue
+            with archive.open(name) as handle:
+                carry = b""
+                while True:
+                    block = handle.read(1024 * 1024)
+                    if not block:
+                        break
+                    content = carry + block
+                    if pattern.search(content):
+                        return True
+                    carry = content[-256:]
+    return False
+
+
+_sd06_checked_inputs = set()
+
+
+def _sd06_read_input(path, read_only=True, data_only=False):
+    if not read_only or data_only:
+        raise ValueError("SD06: unexpected optimized input-reader arguments")
+
+    path = Path(path)
+    stat = path.stat()
+    signature = (
+        str(path.resolve()), stat.st_size, stat.st_mtime_ns
+    )
+
+    if _sd06_contains_formulas(*signature):
+        print(
+            f"SD_006 - {path.name}: formulas detected; "
+            "using original openpyxl reader.",
+            flush=True,
+        )
+        return load_workbook(path, read_only=True, data_only=False)
+
+    fast = None
+    try:
+        fast = _Sd06FastBook(path)
+
+        # Validate a prefix against the original reader once per file/version.
+        # A mismatch falls back to the original reader.
+        if signature not in _sd06_checked_inputs:
+            original = load_workbook(
+                path, read_only=True, data_only=False
+            )
+            try:
+                old_rows = list(_sd06_islice(
+                    original["Sheet1"].iter_rows(values_only=True), 20
+                ))
+                new_rows = list(_sd06_islice(
+                    fast["Sheet1"].iter_rows(values_only=True), 20
+                ))
+
+                if len(old_rows) != len(new_rows):
+                    raise ValueError("prefix row count differs")
+
+                for old, new in zip(old_rows, new_rows):
+                    for left, right in _sd06_zip_longest(old, new):
+                        if _sd06_fast_value(left) != _sd06_fast_value(right):
+                            raise ValueError("prefix cell value differs")
+            finally:
+                original.close()
+
+            _sd06_checked_inputs.add(signature)
+
+        return fast
+
+    except Exception as error:
+        if fast is not None:
+            fast.close()
+        print(
+            f"SD_006 - {path.name}: fast-reader check unavailable "
+            f"({type(error).__name__}: {error}); "
+            "using original openpyxl reader.",
+            flush=True,
+        )
+        return load_workbook(path, read_only=True, data_only=False)
+
+
+def _sd06_timed(label, function):
+    @_sd06_wraps(function)
+    def measured(*args, **kwargs):
+        started = _sd06_clock()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            print(
+                f"SD_006 - Stage {label}: "
+                f"{_sd06_clock() - started:.2f}s",
+                flush=True,
+            )
+    return measured
+
+
+# Bounded caches for pure scalar conversions; no persistent data cache.
+ident = _sd06_lru_cache(maxsize=16384)(ident)
+parse_sap_date = _sd06_lru_cache(maxsize=8192)(parse_sap_date)
+
+master = _sd06_timed("account master", master)
+detect = _sd06_timed("candidate detection", detect)
+complete = _sd06_timed("journal reconstruction", complete)
+
+
 def run_sd_006(context):
     accounts = master(context)
     candidates, stats = detect(context, accounts)
@@ -380,6 +567,10 @@ def run_sd_006(context):
     frame = pd.DataFrame(output, columns=VISIBLE + EXTRA)
     if not frame.empty:
         frame = frame.sort_values(KEY).reset_index(drop=True)
+    frame = enrich_sd_names(
+        context, frame,
+        user_columns={'Account Created By': 'Account Created By Name', 'Journal Posted By': 'Journal Posted By Name'},
+    )
     path = write_control_sheet(context, 'SD06', frame, date_columns=['Account Created On', 'Entry Date'], amount_columns=['Debit Amount', 'Credit Amount', 'Amount in Document Currency', 'Amount in Local Currency'])
     present(path, frame, stats)
     print(f'SD_006 - Output positions: {len(frame)}')

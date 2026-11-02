@@ -224,7 +224,7 @@ def get_active_modules(config_df):
 
 def _extract_vm_rules(dataframe, row):
     """Load VM-specific helpers only for enabled VM controls."""
-    from core.vm_rules import extract_vm_rule_values
+    from core.vm_common import extract_vm_rule_values
 
     return extract_vm_rule_values(dataframe, row)
 

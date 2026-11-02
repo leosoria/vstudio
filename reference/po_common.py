@@ -74,6 +74,12 @@ PO_LINE_ALIASES = {
         "LIFNR",
         "EKKO-LIFNR",
     ),
+    "Vendor Name": (
+        "Vendor Name",
+        "Name 1",
+        "NAME1",
+        "LFA1-NAME1",
+    ),
     "PO Doc Date": (
         "Doc. Date",
         "Document Date",
@@ -459,6 +465,15 @@ def find_period_input_file(
     return matches[0]
 
 
+def find_po_input_file(context):
+    """Return the period-specific PO Lines input."""
+    return find_period_input_file(
+        context=context,
+        input_prefix=PO_INPUT_PREFIX,
+        source_name="PO Lines",
+    )
+
+
 def resolve_sheet_name(
     file_path,
     expected_sheet=PO_INPUT_SHEET,
@@ -813,6 +828,7 @@ def normalize_po_dataframe(
         "PO Number",
         "PO Line",
         "Vendor Code",
+        "Vendor Name",
         "PO Creator ID",
         "Item Code",
         "PR Number",

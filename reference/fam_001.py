@@ -56,6 +56,7 @@ from core.fam_common import (
     load_fx_rates_data,
     normalize_company_output,
     normalize_currency,
+    normalize_fam_support_columns as normalize_common_fam_support_columns,
     normalize_text,
     open_or_create_fam_output_workbook,
     parse_number,
@@ -659,7 +660,7 @@ def read_optional_support_file(context, keyword):
     dataframe = pd.read_excel(support_file)
     dataframe = dataframe.dropna(axis=0, how="all")
     dataframe = dataframe.dropna(axis=1, how="all")
-    dataframe = normalize_support_columns(dataframe)
+    dataframe = normalize_common_fam_support_columns(dataframe)
 
     print(f"FAM_001 support file {keyword}: {support_file}")
     print(f"FAM_001 support file {keyword} rows loaded: {len(dataframe)}")
