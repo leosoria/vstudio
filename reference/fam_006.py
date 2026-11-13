@@ -1,28 +1,24 @@
 """
-FAM_006 - Net book value after useful-life end.
+FAM06 - Potential exceptions against ANKB asset-class useful life.
 
-Updated auditor criteria:
-- Use ANLB-AFABG, not capitalization date.
-- Life months = NDJAR * 12 + NDPER; assume 12 periods/year.
-- Include the start month and cutoff month. TO must be month-end.
-- Used months = min(life months, elapsed calendar months), minimum zero.
-- Remaining months = life months minus used months.
-- Expected depreciation = min(CAP, CAP / life months * used months),
-  rounded to cents. Never exceed CAP.
-- FAM05 difference = expected minus abs(recorded depreciation),
-  rounded to cents.
-- End = last day of the last depreciation month, starting from AFABG.
-- FAM06: end <= cutoff and NBV > tolerance.
-- FAM07: end > cutoff and abs(NBV) <= tolerance.
+Inputs: AR values/class, ANLB-AFABG start, ANKB class useful life.
+ANKB is matched by class, selected chart, area and validity at module TO.
+The chart must match the companies being analyzed.
+PARAM3 is optional: blank selects the sole chart in ANKB for the area;
+multiple charts require an explicit value.
+PARAM1 blank = area 01; PARAM2 blank = local-currency tolerance 0.01.
 
-Missing AFABG produces DATA_REVIEW; capitalization is not a fallback.
-Useful life comes from ANLB per asset.
-Residuals, impairments, additions and historical changes may require review.
-This is an audit recalculation, not a reproduction of every SAP key.
+Life months = ANKB-NDJAR * 12 + NDPER; assume 12 periods per year.
+Start month is included; end is the last day of the final life month.
+TO must be month-end. Capitalization date is not a fallback for AFABG.
+FAM06: class life ended and NBV > tolerance.
+FAM07: NBV zero within tolerance before class life ends, including CAP zero.
 
-Inputs, output layout, company filter and parameters are unchanged.
-PARAM1 blank = area 01; PARAM2 blank = LC tolerance 0.01.
-Each control updates only its own output through its existing run function.
+Zero class life is counted as NOT_APPLICABLE_CLASS_LIFE_ZERO.
+Missing/conflicting class or asset terms are counted as DATA_REVIEW.
+Only potential exceptions are exported to this control's own worksheet.
+Class-reference exceptions do not establish that SAP asset terms are incorrect.
+This control is independent; it does not import or change FAM05.
 """
 from pathlib import Path
 import math
@@ -237,7 +233,7 @@ def read_sources(context, cutoff, area):
         f"selected area: {area}; rows: {len(anlb)}"
     )
     print(f"FAM_006 conflicting ANLB terms: {len(ambiguous_keys)}")
-    return ar, lookup, ambiguous_keys
+    return fam_class_reference_sources(context, cutoff, area, ar, lookup, ambiguous_keys)
 
 
 FAM06_COLUMNS = [
@@ -300,13 +296,25 @@ def fam_monthly_values(cap, depreciation, nbv, terms, cutoff, tolerance):
         )
         return result
 
-    if float(cap) <= tolerance:
-        result["skip"] = True
+
+    if terms.get("class_error"):
+        result.update(
+            classification="DATA_REVIEW",
+            notes=terms["class_error"],
+        )
         return result
 
     years = number(terms.get("years"))
     periods = number(terms.get("periods"))
     start = to_datetime_value(terms.get("start", pd.NaT))
+
+    if years == 0 and periods == 0:
+        result.update(
+            classification="NOT_APPLICABLE_CLASS_LIFE_ZERO",
+            notes="ANKB class useful life is zero.",
+            skip=True,
+        )
+        return result
 
     if (
         years is None or periods is None
@@ -318,7 +326,7 @@ def fam_monthly_values(cap, depreciation, nbv, terms, cutoff, tolerance):
         result.update(
             classification="DATA_REVIEW",
             notes=(
-                "Missing/invalid ANLB useful life "
+                "Missing/invalid ANKB class useful life "
                 "or depreciation start (AFABG)."
             ),
         )
@@ -401,7 +409,7 @@ def evaluate_fam06(cap, depreciation, nbv, terms, cutoff, tolerance, capitalized
     if result['end'] <= pd.Timestamp(cutoff).normalize() and nbv > tolerance:
         result.update(
             classification="LIFE_EXPIRED_WITH_NET_VALUE",
-            notes="Useful life has ended, but net book value remains.",
+            notes="ANKB class useful life has ended, but net book value remains; class-reference exception.",
         )
     return result
 
@@ -418,8 +426,6 @@ def run_fam_006(context):
             number(row[name]) for name in ("cap", "dep", "nbv")
         ]
 
-        if cap is not None and abs(cap) <= tolerance:
-            continue
 
         terms = lookup.get(asset_key)
         if terms is None:
@@ -442,7 +448,10 @@ def run_fam_006(context):
 
         status = result["classification"]
         # FAM06_07_SPLIT
-        if status == "DATA_REVIEW":
+        if status in (
+            "DATA_REVIEW",
+            "NOT_APPLICABLE_CLASS_LIFE_ZERO",
+        ):
             counts[status] = counts.get(status, 0) + 1
             continue
         if status != "LIFE_EXPIRED_WITH_NET_VALUE":
@@ -500,10 +509,7 @@ def run_fam_006(context):
 
     save_fam_output_workbook(workbook, output)
 
-    exceptions = sum(
-        count for status, count in counts.items()
-        if status != "DATA_REVIEW"
-    )
+    exceptions = counts.get("LIFE_EXPIRED_WITH_NET_VALUE", 0)
     print(
         f"FAM_006 area: {area.zfill(2)}; "
         f"tolerance LC: {tolerance}"
@@ -515,3 +521,162 @@ def run_fam_006(context):
     )
     print(f"FAM_006 classifications: {counts}")
     print(f"FAM_006 output: {output}; worksheet FAM06 only.")
+
+
+# FAM_CLASS_LIFE_ANKB_V1
+def fam_class_reference_sources(context, cutoff, area, ar, lookup, ambiguous):
+    """Use ANKB class life; retain ANLB start and asset identifiers."""
+    from datetime import datetime, date
+
+    path = input_file(context, "ANKB", cutoff)
+    frame = pd.read_excel(path, dtype=object).dropna(how="all")
+    frame.columns = [text(c) for c in frame.columns]
+
+    fields = {
+        "class": [
+            "Class", "Asset Class", "ANLKL", "ANKB-ANLKL",
+        ],
+        "chart": [
+            "ChDep", "Chart of dep.", "Chart of depreciation",
+            "AFAPL", "ANKB-AFAPL",
+        ],
+        "area": [
+            "Ar.", "Depreciation area", "AFABE", "ANKB-AFABE",
+        ],
+        "from": ["Valid from", "ADATU", "ANKB-ADATU"],
+        "to": ["Valid to", "BDATU", "ANKB-BDATU"],
+        "years": [
+            "Use", "Useful life", "NDJAR", "ANKB-NDJAR",
+        ],
+        "periods": [
+            "Per", "Per.", "Usef.life in periods",
+            "Useful life in periods", "NDPER", "ANKB-NDPER",
+        ],
+    }
+
+    columns = resolve_columns(frame, fields)
+    frame = frame.rename(columns={
+        original: logical for logical, original in columns.items()
+    })
+    frame = frame.loc[
+        frame["area"].map(identifier).eq(area)
+    ].copy()
+    frame["chart"] = frame["chart"].map(
+        lambda value: text(value).upper()
+    )
+
+    charts = sorted(set(frame["chart"]) - {""})
+    chart = text(
+        context.get("control", {}).get("param3", "")
+    ).upper()
+
+    if not chart:
+        if len(charts) != 1:
+            raise ValueError(
+                "ANKB must contain one chart for this area, "
+                f"or specify PARAM3. Charts: {charts}"
+            )
+        chart = charts[0]
+
+    frame = frame.loc[frame["chart"].eq(chart)]
+    if frame.empty:
+        raise ValueError(
+            f"ANKB has no rows for chart {chart}, area {area}."
+        )
+
+    def validity(value, lower=False):
+        raw = text(value)
+
+        if lower and raw in (
+            "", "0000-01-01", "00000000",
+            "00.00.0000", "00/00/0000",
+        ):
+            return date.min
+
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+
+        for fmt in (
+            "%Y-%m-%d", "%d/%m/%Y", "%d.%m.%Y", "%Y%m%d",
+        ):
+            try:
+                return datetime.strptime(raw, fmt).date()
+            except ValueError:
+                pass
+
+        raise ValueError(
+            f"Invalid ANKB validity date: {raw!r}"
+        )
+
+    terms_by_class = {}
+
+    for _, row in frame.iterrows():
+        if not text(row["class"]):
+            continue
+
+        lower = validity(row["from"], True)
+        upper = validity(row["to"])
+
+        if lower > upper:
+            raise ValueError(
+                "ANKB validity start is after validity end."
+            )
+
+        if not lower <= pd.Timestamp(cutoff).date() <= upper:
+            continue
+
+        name = text(row["class"]).upper()
+        value = (
+            number(row["years"]),
+            number(row["periods"]),
+        )
+        terms_by_class.setdefault(name, set()).add(value)
+
+    result = {}
+
+    for _, row in ar.iterrows():
+        asset_key = tuple(row[key] for key in KEYS)
+        terms = dict(lookup.get(asset_key, {}))
+
+        terms["asset_years"] = terms.get("years")
+        terms["asset_periods"] = terms.get("periods")
+
+        name = text(row["class"]).upper()
+        values = terms_by_class.get(name, set())
+
+        terms["chart"] = chart
+        terms["class"] = name
+        terms["life_source"] = "ANKB"
+
+        if asset_key in ambiguous:
+            terms["class_error"] = (
+                "Conflicting ANLB asset terms."
+            )
+        elif asset_key not in lookup:
+            terms["class_error"] = (
+                "No matching ANLB asset for selected area."
+            )
+        elif len(values) != 1:
+            terms["class_error"] = (
+                "Missing or conflicting ANKB class life "
+                "at analysis cutoff."
+            )
+        else:
+            terms["years"], terms["periods"] = next(
+                iter(values)
+            )
+
+        result[asset_key] = terms
+
+    print(
+        f"ANKB input: {path.name}; chart: {chart}; "
+        f"area: {area}; life basis: asset class."
+    )
+    print(
+        "Company/chart assignment must match "
+        "the selected ANKB chart."
+    )
+    return ar, result, ambiguous
+
